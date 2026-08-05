@@ -1,0 +1,1 @@
+"""CNINFO financial report monitor."""

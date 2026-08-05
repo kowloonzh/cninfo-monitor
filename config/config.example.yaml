@@ -1,0 +1,17 @@
+monitor:
+  report_types:
+    - interim
+  state_path: "../data/state.json"
+  request_timeout: 60
+  bootstrap_silently: true
+
+notifications:
+  workwechat:
+    enabled: false
+    env_file: "../.env"
+    corp_id_env: "WORKWECHAT_CORP_ID"
+    corp_secret_env: "WORKWECHAT_CORP_SECRET"
+    agent_id_env: "WORKWECHAT_AGENT_ID"
+    user_ids: []
+    department_ids: []
+    tag_ids: []
