@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from cninfo_monitor import monitor
 from cninfo_monitor.models import Report
-from cninfo_monitor.monitor import JsonStateStore, format_digest, run_monitor
+from cninfo_monitor.monitor import (
+    JsonStateStore,
+    format_digest,
+    run_monitor,
+)
 
 
 def report(code: str, name: str, announcement_id: str) -> Report:
@@ -102,3 +107,43 @@ def test_format_digest_contains_summary_type_date_and_pdf_link():
     assert "2026年半年度报告" in message
     assert "披露日期：2026-08-05" in message
     assert "https://static.cninfo.com.cn/1.PDF" in message
+
+
+def test_format_digest_pages_are_byte_bounded_numbered_and_complete():
+    reports = [
+        report(f"{index:06d}", f"公司{index}", str(index))
+        for index in range(1, 37)
+    ]
+
+    pages = monitor.format_digest_pages(reports, max_bytes=1900)
+
+    assert len(pages) > 1
+    for page_number, page in enumerate(pages, start=1):
+        assert len(page.encode("utf-8")) <= 1900
+        assert f"第 {page_number}/{len(pages)} 条" in page
+        assert "本条" in page
+    combined = "\n".join(pages)
+    for item in reports:
+        assert combined.count(f"{item.sec_name}（{item.sec_code}）") == 1
+
+
+def test_run_monitor_sends_all_digest_pages_before_recording_state(tmp_path):
+    state = JsonStateStore(tmp_path / "state.json")
+    run_monitor([], state, sender=lambda _: True, bootstrap_silently=True)
+    reports = [
+        report(f"{index:06d}", f"公司{index}", str(index))
+        for index in range(1, 37)
+    ]
+    calls = []
+
+    result = run_monitor(
+        reports,
+        state,
+        sender=lambda message: calls.append(message) or True,
+        bootstrap_silently=True,
+    )
+
+    assert result.notification_sent is True
+    assert len(calls) > 1
+    assert all(len(message.encode("utf-8")) <= 1900 for message in calls)
+    assert state.known_keys() == {item.company_report_key for item in reports}

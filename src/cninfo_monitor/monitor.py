@@ -10,6 +10,9 @@ from pathlib import Path
 from cninfo_monitor.models import Report
 
 
+DIGEST_PAGE_MAX_BYTES = 1900
+
+
 class JsonStateStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -68,16 +71,79 @@ def format_digest(reports: Iterable[Report]) -> str:
     rows = list(reports)
     lines = [f"巨潮财报监控：新发布 {len(rows)} 家"]
     for report in rows:
-        lines.extend(
+        lines.extend(["", _format_report(report)])
+    return "\n".join(lines)
+
+
+def format_digest_pages(
+    reports: Iterable[Report],
+    *,
+    max_bytes: int = DIGEST_PAGE_MAX_BYTES,
+) -> tuple[str, ...]:
+    rows = list(reports)
+    if not rows:
+        return (format_digest(rows),)
+
+    total = len(rows)
+    longest_header = _format_digest_page_header(total, total, total, total)
+    body_limit = max_bytes - len(f"{longest_header}\n\n".encode("utf-8"))
+    if body_limit <= 0:
+        raise ValueError("digest page byte limit is too small for its header")
+
+    grouped_blocks: list[list[str]] = []
+    current: list[str] = []
+    for report in rows:
+        block = _format_report(report)
+        candidate = "\n\n".join([*current, block])
+        if len(candidate.encode("utf-8")) <= body_limit:
+            current.append(block)
+            continue
+        if not current:
+            raise ValueError(
+                f"report {report.sec_code} is too large for one digest page"
+            )
+        grouped_blocks.append(current)
+        current = [block]
+    grouped_blocks.append(current)
+
+    page_count = len(grouped_blocks)
+    return tuple(
+        "\n\n".join(
             [
-                "",
-                f"{report.sec_name}（{report.sec_code}）",
-                report.title,
-                f"披露日期：{report.disclosure_date}",
-                report.pdf_url,
+                _format_digest_page_header(
+                    total,
+                    page_number,
+                    page_count,
+                    len(blocks),
+                ),
+                *blocks,
             ]
         )
-    return "\n".join(lines)
+        for page_number, blocks in enumerate(grouped_blocks, start=1)
+    )
+
+
+def _format_digest_page_header(
+    total: int,
+    page_number: int,
+    page_count: int,
+    page_size: int,
+) -> str:
+    return (
+        f"巨潮财报监控：新发布 {total} 家"
+        f"（第 {page_number}/{page_count} 条，本条 {page_size} 家）"
+    )
+
+
+def _format_report(report: Report) -> str:
+    return "\n".join(
+        [
+            f"{report.sec_name}（{report.sec_code}）",
+            report.title,
+            f"披露日期：{report.disclosure_date}",
+            report.pdf_url,
+        ]
+    )
 
 
 def run_monitor(
@@ -101,7 +167,7 @@ def run_monitor(
             state.add_reports(())
         return RunResult(new_reports=())
 
-    sent = sender(format_digest(new_reports))
+    sent = all(sender(page) for page in format_digest_pages(new_reports))
     if sent:
         state.add_reports(new_reports)
     return RunResult(new_reports=new_reports, notification_sent=sent)

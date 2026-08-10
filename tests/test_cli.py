@@ -88,3 +88,47 @@ def test_notify_existing_sends_initial_results_and_records_state(
 def test_rolling_month_start_uses_previous_calendar_month_and_clamps_day():
     assert cli.rolling_month_start("2026-08-05") == "2026-07-05"
     assert cli.rolling_month_start("2026-03-31") == "2026-02-28"
+
+
+def test_no_new_reports_sends_daily_heartbeat(tmp_path, monkeypatch, capsys):
+    config_path = write_config(tmp_path)
+    messages = []
+    monkeypatch.setattr(cli, "fetch_reports", lambda config, end_date: [sample_report()])
+    monkeypatch.setattr(
+        cli,
+        "send_workwechat_text",
+        lambda message, config: messages.append(message) or True,
+    )
+    args = [
+        "run",
+        "--config",
+        str(config_path),
+        "--end-date",
+        "2026-08-06",
+    ]
+
+    assert cli.main(args) == 0
+    assert messages == []
+    assert cli.main(args) == 0
+
+    assert len(messages) == 1
+    assert messages[0] == "今日无新增财报"
+    assert "心跳消息已发送" in capsys.readouterr().out
+
+
+def test_failed_daily_heartbeat_returns_failure(tmp_path, monkeypatch, capsys):
+    config_path = write_config(tmp_path)
+    monkeypatch.setattr(cli, "fetch_reports", lambda config, end_date: [sample_report()])
+    monkeypatch.setattr(cli, "send_workwechat_text", lambda message, config: False)
+    args = [
+        "run",
+        "--config",
+        str(config_path),
+        "--end-date",
+        "2026-08-06",
+    ]
+
+    assert cli.main(args) == 0
+    assert cli.main(args) == 1
+
+    assert "心跳消息发送失败" in capsys.readouterr().err

@@ -146,12 +146,22 @@ def _split_text(text: str, chunk_size: int) -> list[str]:
     chunks: list[str] = []
     remaining = text
     while remaining:
-        if len(remaining) <= chunk_size:
+        if len(remaining.encode("utf-8")) <= chunk_size:
             chunks.append(remaining)
             break
-        split_at = remaining.rfind("\n", 0, chunk_size + 1)
+        prefix_length = _utf8_prefix_length(remaining, chunk_size)
+        split_at = remaining.rfind("\n", 0, prefix_length + 1)
         if split_at <= 0:
-            split_at = chunk_size
+            split_at = prefix_length
         chunks.append(remaining[:split_at].rstrip())
         remaining = remaining[split_at:].lstrip("\n")
     return chunks or [""]
+
+
+def _utf8_prefix_length(text: str, max_bytes: int) -> int:
+    byte_count = 0
+    for index, character in enumerate(text):
+        byte_count += len(character.encode("utf-8"))
+        if byte_count > max_bytes:
+            return index
+    return len(text)

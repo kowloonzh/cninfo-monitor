@@ -14,6 +14,7 @@ class MonitorConfig:
     state_path: Path
     request_timeout: float
     bootstrap_silently: bool
+    notify_when_no_updates: bool
 
 
 def load_monitor_config(path: str | Path) -> MonitorConfig:
@@ -41,4 +42,5 @@ def load_monitor_config(path: str | Path) -> MonitorConfig:
         state_path=state_path.resolve(),
         request_timeout=float(monitor.get("request_timeout", 60)),
         bootstrap_silently=bool(monitor.get("bootstrap_silently", True)),
+        notify_when_no_updates=bool(monitor.get("notify_when_no_updates", True)),
     )

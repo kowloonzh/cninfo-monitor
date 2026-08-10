@@ -4,6 +4,7 @@ monitor:
   state_path: "../data/state.json"
   request_timeout: 60
   bootstrap_silently: true
+  notify_when_no_updates: true
 
 notifications:
   workwechat:

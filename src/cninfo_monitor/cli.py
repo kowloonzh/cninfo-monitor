@@ -103,6 +103,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"首次运行已建立基线：{result.baselined} 家，本次不推送")
             return 0
         if not result.new_reports:
+            if config.notify_when_no_updates:
+                heartbeat = format_heartbeat()
+                if send_workwechat_text(heartbeat, workwechat):
+                    print("查询完成：今日无新增财报，心跳消息已发送")
+                    return 0
+                print(
+                    "查询完成：今日无新增财报，但心跳消息发送失败",
+                    file=sys.stderr,
+                )
+                return 1
             print(f"查询完成：当前 {len(reports)} 家，无新增财报")
             return 0
         if result.notification_sent:
@@ -117,6 +127,10 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, RuntimeError, ValueError, httpx.HTTPError) as exc:
         print(f"cninfo-monitor 执行失败：{exc}", file=sys.stderr)
         return 1
+
+
+def format_heartbeat() -> str:
+    return "今日无新增财报"
 
 
 def _build_parser() -> argparse.ArgumentParser:

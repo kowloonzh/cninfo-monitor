@@ -26,6 +26,7 @@ monitor:
     assert config.report_types == frozenset({"interim", "annual"})
     assert config.state_path == (tmp_path / "data/state.json").resolve()
     assert config.request_timeout == 20.0
+    assert config.notify_when_no_updates is True
 
 
 def test_load_monitor_config_rejects_unknown_report_type(tmp_path):

@@ -76,7 +76,15 @@ def test_send_workwechat_text_uses_official_api_and_splits_long_messages(monkeyp
     payload = json.loads(send_requests[0].data.decode("utf-8"))
     assert payload["toparty"] == "3"
     assert payload["msgtype"] == "text"
-    assert len(payload["text"]["content"]) <= 1900
+    assert all(
+        len(
+            json.loads(request.data.decode("utf-8"))["text"]["content"].encode(
+                "utf-8"
+            )
+        )
+        <= 1900
+        for request in send_requests
+    )
 
 
 def test_send_defaults_to_all_users_when_recipient_is_empty(monkeypatch):
