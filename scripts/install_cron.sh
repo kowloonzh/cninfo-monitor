@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DAILY_SCRIPT="$PROJECT_DIR/scripts/run_daily.sh"
-SCHEDULE="${CNINFO_CRON_SCHEDULE:-0 19 * * *}"
+SCHEDULE="${CNINFO_CRON_SCHEDULE:-30 18 * * *}"
 BEGIN_MARKER="# BEGIN cninfo-monitor"
 END_MARKER="# END cninfo-monitor"
 TEMP_DIR="$(mktemp -d)"

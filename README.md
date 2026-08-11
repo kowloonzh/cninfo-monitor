@@ -133,7 +133,7 @@ notifications:
 scripts/run_daily.sh
 ```
 
-确认企业微信测试成功并完成首次运行后，安装每天 19:00 执行的 cron：
+确认企业微信测试成功并完成首次运行后，安装每天 18:30 执行的 cron：
 
 ```bash
 scripts/install_cron.sh
