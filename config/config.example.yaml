@@ -1,4 +1,7 @@
 monitor:
+  markets:
+    - mainland
+    - hong_kong
   report_types:
     - interim
   state_path: "../data/state.json"

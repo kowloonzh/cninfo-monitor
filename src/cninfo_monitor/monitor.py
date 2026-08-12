@@ -22,26 +22,56 @@ class JsonStateStore:
         return self.path.exists()
 
     def known_keys(self) -> set[str]:
-        if not self.path.exists():
+        raw = self._read()
+        if raw is None:
             return set()
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            raise RuntimeError(f"cannot read monitor state {self.path}: {exc}") from exc
         keys = raw.get("known_company_reports", [])
         if not isinstance(keys, list):
             raise RuntimeError(f"invalid monitor state {self.path}")
         return {str(key) for key in keys}
 
-    def add_reports(self, reports: Iterable[Report]) -> None:
+    def initialized_markets(self) -> set[str]:
+        raw = self._read()
+        if raw is None:
+            return set()
+        markets = raw.get("initialized_markets")
+        if markets is None:
+            return {"mainland"}
+        if not isinstance(markets, list):
+            raise RuntimeError(f"invalid monitor state {self.path}")
+        return {str(market) for market in markets}
+
+    def _read(self) -> dict[str, object] | None:
+        if not self.path.exists():
+            return None
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            raise RuntimeError(f"cannot read monitor state {self.path}: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise RuntimeError(f"invalid monitor state {self.path}")
+        return raw
+
+    def add_reports(
+        self,
+        reports: Iterable[Report],
+        *,
+        initialized_markets: Iterable[str] = (),
+    ) -> None:
         keys = self.known_keys()
         keys.update(report.company_report_key for report in reports)
-        self._write(keys)
+        markets = self.initialized_markets()
+        markets.update(initialized_markets)
+        self._write(keys, markets)
 
-    def _write(self, keys: set[str]) -> None:
+    def _write(self, keys: set[str], markets: set[str]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(
-            {"version": 1, "known_company_reports": sorted(keys)},
+            {
+                "version": 2,
+                "initialized_markets": sorted(markets),
+                "known_company_reports": sorted(keys),
+            },
             ensure_ascii=False,
             indent=2,
         )
@@ -136,9 +166,11 @@ def _format_digest_page_header(
 
 
 def _format_report(report: Report) -> str:
+    market_name = "港股" if report.market == "hong_kong" else "沪深京"
     return "\n".join(
         [
             f"{report.sec_name}（{report.sec_code}）",
+            f"市场：{market_name}",
             report.title,
             f"披露日期：{report.disclosure_date}",
             report.pdf_url,
@@ -152,22 +184,40 @@ def run_monitor(
     *,
     sender: Callable[[str], bool],
     bootstrap_silently: bool,
+    markets: Iterable[str] = ("mainland",),
 ) -> RunResult:
     current_reports = tuple(reports)
-    if not state.exists and bootstrap_silently:
-        state.add_reports(current_reports)
+    configured_markets = set(markets)
+    state_existed = state.exists
+    if not state_existed and bootstrap_silently:
+        state.add_reports(current_reports, initialized_markets=configured_markets)
         return RunResult(new_reports=(), baselined=len(current_reports))
+
+    if not state_existed:
+        state.add_reports((), initialized_markets=configured_markets)
+
+    uninitialized_markets = configured_markets - state.initialized_markets()
+    baselined_reports = tuple(
+        report for report in current_reports if report.market in uninitialized_markets
+    )
+    if uninitialized_markets:
+        state.add_reports(
+            baselined_reports,
+            initialized_markets=uninitialized_markets,
+        )
 
     known = state.known_keys()
     new_reports = tuple(
         report for report in current_reports if report.company_report_key not in known
     )
     if not new_reports:
-        if not state.exists:
-            state.add_reports(())
-        return RunResult(new_reports=())
+        return RunResult(new_reports=(), baselined=len(baselined_reports))
 
     sent = all(sender(page) for page in format_digest_pages(new_reports))
     if sent:
         state.add_reports(new_reports)
-    return RunResult(new_reports=new_reports, notification_sent=sent)
+    return RunResult(
+        new_reports=new_reports,
+        baselined=len(baselined_reports),
+        notification_sent=sent,
+    )

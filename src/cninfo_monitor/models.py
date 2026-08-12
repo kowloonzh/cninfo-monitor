@@ -13,7 +13,10 @@ class Report:
     disclosure_date: str
     announcement_id: str
     pdf_url: str
+    market: str = "mainland"
 
     @property
     def company_report_key(self) -> str:
+        if self.market != "mainland":
+            return f"{self.market}:{self.report_year}:{self.report_type}:{self.sec_code}"
         return f"{self.report_year}:{self.report_type}:{self.sec_code}"

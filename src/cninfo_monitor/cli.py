@@ -11,6 +11,7 @@ import httpx
 from cninfo_monitor.cninfo import (
     CNINFO_TIMEZONE,
     query_all_announcements,
+    query_hong_kong_announcements,
     select_formal_reports,
 )
 from cninfo_monitor.config import MonitorConfig, load_monitor_config
@@ -43,15 +44,32 @@ def fetch_reports(config: MonitorConfig, end_date: str) -> list[Report]:
         timeout=config.request_timeout,
         follow_redirects=True,
     ) as client:
-        announcements = query_all_announcements(
-            client,
-            start_date=start_date,
-            end_date=end.isoformat(),
-            report_types=config.report_types,
-        )
-    return select_formal_reports(
-        announcements,
-        config.report_types,
+        reports: list[Report] = []
+        if "mainland" in config.markets:
+            announcements = query_all_announcements(
+                client,
+                start_date=start_date,
+                end_date=end.isoformat(),
+                report_types=config.report_types,
+            )
+            reports.extend(select_formal_reports(announcements, config.report_types))
+        if "hong_kong" in config.markets:
+            announcements = query_hong_kong_announcements(
+                client,
+                start_date=start_date,
+                end_date=end.isoformat(),
+                report_types=config.report_types,
+            )
+            reports.extend(
+                select_formal_reports(
+                    announcements,
+                    config.report_types,
+                    market="hong_kong",
+                )
+            )
+    return sorted(
+        reports,
+        key=lambda report: (report.disclosure_date, report.market, report.sec_code),
     )
 
 
@@ -98,9 +116,10 @@ def main(argv: list[str] | None = None) -> int:
             bootstrap_silently=(
                 config.bootstrap_silently and not args.notify_existing
             ),
+            markets=config.markets,
         )
-        if result.baselined:
-            print(f"首次运行已建立基线：{result.baselined} 家，本次不推送")
+        if result.baselined and not result.new_reports:
+            print(f"已建立新市场基线：{result.baselined} 家，本次不推送")
             return 0
         if not result.new_reports:
             if config.notify_when_no_updates:

@@ -14,6 +14,7 @@ def sample_report() -> Report:
         disclosure_date="2026-08-05",
         announcement_id="1",
         pdf_url="https://static.cninfo.com.cn/1.PDF",
+        market="mainland",
     )
 
 
@@ -88,6 +89,54 @@ def test_notify_existing_sends_initial_results_and_records_state(
 def test_rolling_month_start_uses_previous_calendar_month_and_clamps_day():
     assert cli.rolling_month_start("2026-08-05") == "2026-07-05"
     assert cli.rolling_month_start("2026-03-31") == "2026-02-28"
+
+
+def test_fetch_reports_combines_mainland_and_hong_kong(tmp_path, monkeypatch):
+    config_path = write_config(tmp_path)
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "monitor:\n",
+            "monitor:\n  markets: [mainland, hong_kong]\n",
+        ),
+        encoding="utf-8",
+    )
+    mainland_row = {
+        "secCode": "000001",
+        "secName": "平安银行",
+        "announcementTitle": "2026年半年度报告",
+        "announcementId": "mainland",
+        "announcementTime": 1786464000000,
+        "adjunctUrl": "mainland.PDF",
+    }
+    hong_kong_row = {
+        "secCode": "00700",
+        "secName": "腾讯控股",
+        "announcementTitle": "截至二零二六年六月三十日止六个月业绩公布",
+        "announcementId": "hong-kong",
+        "announcementTime": 1786464000000,
+        "adjunctUrl": "hong-kong.PDF",
+    }
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(cli.httpx, "Client", FakeClient)
+    monkeypatch.setattr(cli, "query_all_announcements", lambda *args, **kwargs: [mainland_row])
+    monkeypatch.setattr(cli, "query_hong_kong_announcements", lambda *args, **kwargs: [hong_kong_row])
+
+    reports = cli.fetch_reports(cli.load_monitor_config(config_path), "2026-08-12")
+
+    assert [(report.sec_code, report.market) for report in reports] == [
+        ("00700", "hong_kong"),
+        ("000001", "mainland"),
+    ]
 
 
 def test_no_new_reports_sends_daily_heartbeat(tmp_path, monkeypatch, capsys):

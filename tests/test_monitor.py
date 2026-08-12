@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from cninfo_monitor import monitor
 from cninfo_monitor.models import Report
 from cninfo_monitor.monitor import (
@@ -9,7 +11,12 @@ from cninfo_monitor.monitor import (
 )
 
 
-def report(code: str, name: str, announcement_id: str) -> Report:
+def report(
+    code: str,
+    name: str,
+    announcement_id: str,
+    market: str = "mainland",
+) -> Report:
     return Report(
         sec_code=code,
         sec_name=name,
@@ -19,6 +26,7 @@ def report(code: str, name: str, announcement_id: str) -> Report:
         disclosure_date="2026-08-05",
         announcement_id=announcement_id,
         pdf_url=f"https://static.cninfo.com.cn/{announcement_id}.PDF",
+        market=market,
     )
 
 
@@ -147,3 +155,58 @@ def test_run_monitor_sends_all_digest_pages_before_recording_state(tmp_path):
     assert len(calls) > 1
     assert all(len(message.encode("utf-8")) <= 1900 for message in calls)
     assert state.known_keys() == {item.company_report_key for item in reports}
+
+
+def test_market_is_part_of_hong_kong_key_but_mainland_legacy_key_is_preserved():
+    mainland = report("00700", "境内公司", "mainland")
+    hong_kong = report("00700", "腾讯控股", "hong-kong", market="hong_kong")
+
+    assert mainland.company_report_key == "2026:interim:00700"
+    assert hong_kong.company_report_key == "hong_kong:2026:interim:00700"
+
+
+def test_new_market_is_silently_baselined_without_hiding_mainland_updates(tmp_path):
+    state = JsonStateStore(tmp_path / "state.json")
+    old_mainland = report("000001", "平安银行", "old")
+    run_monitor(
+        [old_mainland],
+        state,
+        sender=lambda _: True,
+        bootstrap_silently=True,
+        markets={"mainland"},
+    )
+    new_mainland = report("000002", "万科A", "new")
+    existing_hong_kong = report("00700", "腾讯控股", "hk", market="hong_kong")
+    messages = []
+
+    result = run_monitor(
+        [old_mainland, new_mainland, existing_hong_kong],
+        state,
+        sender=lambda message: messages.append(message) or True,
+        bootstrap_silently=True,
+        markets={"mainland", "hong_kong"},
+    )
+
+    assert result.baselined == 1
+    assert result.new_reports == (new_mainland,)
+    assert "万科A" in messages[0]
+    assert "腾讯控股" not in messages[0]
+    assert state.initialized_markets() == {"mainland", "hong_kong"}
+
+
+def test_version_one_state_is_treated_as_initialized_mainland(tmp_path):
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "known_company_reports": ["2026:interim:000001"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = JsonStateStore(state_path)
+
+    assert state.initialized_markets() == {"mainland"}
+    assert state.known_keys() == {"2026:interim:000001"}

@@ -8,8 +8,12 @@ import yaml
 from cninfo_monitor.cninfo import REPORT_TYPE_DEFINITIONS
 
 
+SUPPORTED_MARKETS = frozenset({"mainland", "hong_kong"})
+
+
 @dataclass(frozen=True)
 class MonitorConfig:
+    markets: frozenset[str]
     report_types: frozenset[str]
     state_path: Path
     request_timeout: float
@@ -22,6 +26,16 @@ def load_monitor_config(path: str | Path) -> MonitorConfig:
     with config_path.open(encoding="utf-8") as stream:
         raw = yaml.safe_load(stream) or {}
     monitor = raw.get("monitor", {})
+    markets = frozenset(
+        str(value).strip()
+        for value in monitor.get("markets", ["mainland"])
+        if str(value).strip()
+    )
+    unknown_markets = markets - SUPPORTED_MARKETS
+    if unknown_markets:
+        raise ValueError(f"unsupported markets: {', '.join(sorted(unknown_markets))}")
+    if not markets:
+        raise ValueError("monitor.markets cannot be empty")
     report_types = frozenset(
         str(value).strip()
         for value in monitor.get("report_types", ["interim"])
@@ -38,6 +52,7 @@ def load_monitor_config(path: str | Path) -> MonitorConfig:
         state_path = config_path.parent / state_path
 
     return MonitorConfig(
+        markets=markets,
         report_types=report_types,
         state_path=state_path.resolve(),
         request_timeout=float(monitor.get("request_timeout", 60)),
