@@ -149,13 +149,13 @@ notifications:
 scripts/run_daily.sh
 ```
 
-确认企业微信测试成功并完成首次运行后，安装每天 18:30 执行的 cron：
+确认企业微信测试成功并完成首次运行后，安装每天 18:00 和 21:30 各执行一次的 cron：
 
 ```bash
 scripts/install_cron.sh
 ```
 
-自定义时间，例如每天 08:30：
+如需用单个自定义时间替换这两个默认时间，例如每天 08:30：
 
 ```bash
 CNINFO_CRON_SCHEDULE='30 8 * * *' scripts/install_cron.sh
