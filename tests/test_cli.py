@@ -127,9 +127,35 @@ def test_fetch_reports_combines_mainland_and_hong_kong(tmp_path, monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
+        def get(self, url):
+            mainland_fields = [""] * 46
+            mainland_fields[45] = "2159.88"
+            hong_kong_fields = [""] * 46
+            hong_kong_fields[45] = "40508.85"
+            body = (
+                f'v_sz000001="{"~".join(mainland_fields)}";\n'
+                f'v_hk00700="{"~".join(hong_kong_fields)}";\n'
+            ).encode("gbk")
+
+            class FakeResponse:
+                content = body
+
+                def raise_for_status(self):
+                    return None
+
+            return FakeResponse()
+
     monkeypatch.setattr(cli.httpx, "Client", FakeClient)
     monkeypatch.setattr(cli, "query_all_announcements", lambda *args, **kwargs: [mainland_row])
     monkeypatch.setattr(cli, "query_hong_kong_announcements", lambda *args, **kwargs: [hong_kong_row])
+    monkeypatch.setattr(
+        cli,
+        "load_index_memberships",
+        lambda: {
+            "mainland:000001": ("沪深300",),
+            "hong_kong:00700": ("恒生科技",),
+        },
+    )
 
     reports = cli.fetch_reports(cli.load_monitor_config(config_path), "2026-08-12")
 
@@ -137,6 +163,39 @@ def test_fetch_reports_combines_mainland_and_hong_kong(tmp_path, monkeypatch):
         ("00700", "hong_kong"),
         ("000001", "mainland"),
     ]
+    assert [report.total_market_cap for report in reports] == [
+        "40508.85亿港元",
+        "2159.88亿元",
+    ]
+    assert [report.index_names for report in reports] == [
+        ("恒生科技",),
+        ("沪深300",),
+    ]
+
+
+def test_refresh_indexes_command_writes_requested_cache(tmp_path, monkeypatch, capsys):
+    output_path = tmp_path / "index-memberships.json"
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "refresh_official_index_cache",
+        lambda path: calls.append(path)
+        or {
+            "sources": [
+                {"constituent_count": count}
+                for count in (300, 500, 1000, 2000, 30, 50, 50, 50)
+            ],
+            "memberships": {"mainland:000001": ["沪深300"]},
+        },
+    )
+
+    exit_code = cli.main(
+        ["refresh-indexes", "--output", str(output_path)]
+    )
+
+    assert exit_code == 0
+    assert calls == [output_path]
+    assert "8 个指数" in capsys.readouterr().out
 
 
 def test_no_new_reports_sends_daily_heartbeat(tmp_path, monkeypatch, capsys):

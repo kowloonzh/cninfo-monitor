@@ -14,6 +14,8 @@ class Report:
     announcement_id: str
     pdf_url: str
     market: str = "mainland"
+    total_market_cap: str | None = None
+    index_names: tuple[str, ...] = ()
 
     @property
     def company_report_key(self) -> str:

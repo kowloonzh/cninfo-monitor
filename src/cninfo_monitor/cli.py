@@ -15,12 +15,18 @@ from cninfo_monitor.cninfo import (
     select_formal_reports,
 )
 from cninfo_monitor.config import MonitorConfig, load_monitor_config
+from cninfo_monitor.indexes import (
+    enrich_reports_with_index_memberships,
+    load_index_memberships,
+    refresh_official_index_cache,
+)
 from cninfo_monitor.models import Report
 from cninfo_monitor.monitor import JsonStateStore, format_digest, run_monitor
 from cninfo_monitor.notifications import (
     load_workwechat_config,
     send_workwechat_text,
 )
+from cninfo_monitor.quotes import enrich_reports_with_market_caps
 
 
 DEFAULT_CONFIG_PATH = Path("config/config.yaml")
@@ -67,6 +73,13 @@ def fetch_reports(config: MonitorConfig, end_date: str) -> list[Report]:
                     market="hong_kong",
                 )
             )
+        reports = list(enrich_reports_with_market_caps(client, reports))
+        reports = list(
+            enrich_reports_with_index_memberships(
+                reports,
+                load_index_memberships(),
+            )
+        )
     return sorted(
         reports,
         key=lambda report: (report.disclosure_date, report.market, report.sec_code),
@@ -87,6 +100,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "refresh-indexes":
+            output_path = Path(args.output)
+            snapshot = refresh_official_index_cache(output_path)
+            print(
+                f"指数缓存已刷新：{len(snapshot['sources'])} 个指数，"
+                f"{len(snapshot['memberships'])} 只证券"
+            )
+            return 0
+
         if args.command == "test-notification":
             workwechat = load_workwechat_config(args.config)
             message = (
@@ -179,6 +201,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     test_parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     test_parser.add_argument("--message", default="")
+
+    refresh_parser = subparsers.add_parser(
+        "refresh-indexes",
+        help="从指数公司官方来源刷新本地成份股缓存",
+    )
+    refresh_parser.add_argument(
+        "--output",
+        default="data/index_memberships.json",
+        help="缓存输出路径（默认 data/index_memberships.json）",
+    )
     return parser
 
 

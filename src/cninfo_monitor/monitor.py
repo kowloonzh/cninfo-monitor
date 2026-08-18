@@ -167,15 +167,21 @@ def _format_digest_page_header(
 
 def _format_report(report: Report) -> str:
     market_name = "港股" if report.market == "hong_kong" else "沪深京"
-    return "\n".join(
+    lines = [
+        f"{report.sec_name}（{report.sec_code}）",
+        f"市场：{market_name}",
+        f"总市值：{report.total_market_cap or '暂无数据'}",
+    ]
+    if report.index_names:
+        lines.append(f"指数：{'、'.join(report.index_names)}")
+    lines.extend(
         [
-            f"{report.sec_name}（{report.sec_code}）",
-            f"市场：{market_name}",
             report.title,
             f"披露日期：{report.disclosure_date}",
             report.pdf_url,
         ]
     )
+    return "\n".join(lines)
 
 
 def run_monitor(

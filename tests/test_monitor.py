@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 
 from cninfo_monitor import monitor
@@ -104,16 +105,20 @@ def test_failed_notification_is_not_marked_as_known_so_it_retries(tmp_path):
 
 
 def test_format_digest_contains_summary_type_date_and_pdf_link():
-    message = format_digest(
-        [
-            report("000001", "平安银行", "1"),
-            report("000002", "万科A", "2"),
-        ]
+    first = replace(
+        report("000001", "平安银行", "1"),
+        total_market_cap="2159.88亿元",
+        index_names=("沪深300", "机器人产业"),
     )
+    message = format_digest([first, report("000002", "万科A", "2")])
 
     assert message.startswith("巨潮财报监控：新发布 2 家")
     assert "2026年半年度报告" in message
     assert "披露日期：2026-08-05" in message
+    assert "总市值：2159.88亿元" in message
+    assert "总市值：暂无数据" in message
+    assert "指数：沪深300、机器人产业" in message
+    assert message.count("指数：") == 1
     assert "https://static.cninfo.com.cn/1.PDF" in message
 
 

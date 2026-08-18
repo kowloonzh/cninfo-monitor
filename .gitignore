@@ -20,7 +20,7 @@ build/
 dist/
 
 # Runtime state and logs
-data/
+/data/
 logs/
 
 # Editor and OS files
