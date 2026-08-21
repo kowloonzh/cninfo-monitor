@@ -26,7 +26,10 @@ from cninfo_monitor.notifications import (
     load_workwechat_config,
     send_workwechat_text,
 )
-from cninfo_monitor.quotes import enrich_reports_with_market_caps
+from cninfo_monitor.quotes import (
+    enrich_reports_with_market_caps,
+    filter_reports_by_minimum_market_cap,
+)
 
 
 DEFAULT_CONFIG_PATH = Path("config/config.yaml")
@@ -74,6 +77,12 @@ def fetch_reports(config: MonitorConfig, end_date: str) -> list[Report]:
                 )
             )
         reports = list(enrich_reports_with_market_caps(client, reports))
+        reports = list(
+            filter_reports_by_minimum_market_cap(
+                reports,
+                config.minimum_market_cap_yi,
+            )
+        )
         reports = list(
             enrich_reports_with_index_memberships(
                 reports,

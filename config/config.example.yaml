@@ -6,6 +6,7 @@ monitor:
     - interim
   state_path: "../data/state.json"
   request_timeout: 60
+  minimum_market_cap_yi: 100
   bootstrap_silently: true
   notify_when_no_updates: true
 

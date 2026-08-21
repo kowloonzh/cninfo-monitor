@@ -52,6 +52,25 @@ def enrich_reports_with_market_caps(
     )
 
 
+def filter_reports_by_minimum_market_cap(
+    reports: Iterable[Report],
+    minimum_market_cap_yi: Decimal,
+) -> tuple[Report, ...]:
+    kept: list[Report] = []
+    for report in reports:
+        if report.total_market_cap is None:
+            kept.append(report)
+            continue
+        try:
+            value = Decimal(report.total_market_cap.split("亿", 1)[0])
+        except InvalidOperation:
+            kept.append(report)
+            continue
+        if value >= minimum_market_cap_yi:
+            kept.append(report)
+    return tuple(kept)
+
+
 def _parse_market_caps(text: str) -> dict[str, str]:
     market_caps: dict[str, str] = {}
     for match in _QUOTE_ROW.finditer(text):

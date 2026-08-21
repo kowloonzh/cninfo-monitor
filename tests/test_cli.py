@@ -108,6 +108,14 @@ def test_fetch_reports_combines_mainland_and_hong_kong(tmp_path, monkeypatch):
         "announcementTime": 1786464000000,
         "adjunctUrl": "mainland.PDF",
     }
+    small_cap_row = {
+        "secCode": "000002",
+        "secName": "小市值公司",
+        "announcementTitle": "2026年半年度报告",
+        "announcementId": "small-cap",
+        "announcementTime": 1786464000000,
+        "adjunctUrl": "small-cap.PDF",
+    }
     hong_kong_row = {
         "secCode": "00700",
         "secName": "腾讯控股",
@@ -132,8 +140,11 @@ def test_fetch_reports_combines_mainland_and_hong_kong(tmp_path, monkeypatch):
             mainland_fields[45] = "2159.88"
             hong_kong_fields = [""] * 46
             hong_kong_fields[45] = "40508.85"
+            small_cap_fields = [""] * 46
+            small_cap_fields[45] = "99.99"
             body = (
                 f'v_sz000001="{"~".join(mainland_fields)}";\n'
+                f'v_sz000002="{"~".join(small_cap_fields)}";\n'
                 f'v_hk00700="{"~".join(hong_kong_fields)}";\n'
             ).encode("gbk")
 
@@ -146,7 +157,11 @@ def test_fetch_reports_combines_mainland_and_hong_kong(tmp_path, monkeypatch):
             return FakeResponse()
 
     monkeypatch.setattr(cli.httpx, "Client", FakeClient)
-    monkeypatch.setattr(cli, "query_all_announcements", lambda *args, **kwargs: [mainland_row])
+    monkeypatch.setattr(
+        cli,
+        "query_all_announcements",
+        lambda *args, **kwargs: [mainland_row, small_cap_row],
+    )
     monkeypatch.setattr(cli, "query_hong_kong_announcements", lambda *args, **kwargs: [hong_kong_row])
     monkeypatch.setattr(
         cli,

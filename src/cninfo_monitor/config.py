@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import yaml
@@ -17,6 +18,7 @@ class MonitorConfig:
     report_types: frozenset[str]
     state_path: Path
     request_timeout: float
+    minimum_market_cap_yi: Decimal
     bootstrap_silently: bool
     notify_when_no_updates: bool
 
@@ -47,6 +49,15 @@ def load_monitor_config(path: str | Path) -> MonitorConfig:
     if not report_types:
         raise ValueError("monitor.report_types cannot be empty")
 
+    try:
+        minimum_market_cap_yi = Decimal(
+            str(monitor.get("minimum_market_cap_yi", 100))
+        )
+    except InvalidOperation as exc:
+        raise ValueError("monitor.minimum_market_cap_yi must be a number") from exc
+    if minimum_market_cap_yi < 0:
+        raise ValueError("monitor.minimum_market_cap_yi cannot be negative")
+
     state_path = Path(str(monitor.get("state_path", "../data/state.json")))
     if not state_path.is_absolute():
         state_path = config_path.parent / state_path
@@ -56,6 +67,7 @@ def load_monitor_config(path: str | Path) -> MonitorConfig:
         report_types=report_types,
         state_path=state_path.resolve(),
         request_timeout=float(monitor.get("request_timeout", 60)),
+        minimum_market_cap_yi=minimum_market_cap_yi,
         bootstrap_silently=bool(monitor.get("bootstrap_silently", True)),
         notify_when_no_updates=bool(monitor.get("notify_when_no_updates", True)),
     )

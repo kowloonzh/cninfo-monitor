@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from cninfo_monitor.config import load_monitor_config
@@ -29,6 +31,7 @@ monitor:
     assert config.state_path == (tmp_path / "data/state.json").resolve()
     assert config.request_timeout == 20.0
     assert config.notify_when_no_updates is True
+    assert config.minimum_market_cap_yi == Decimal("100")
 
 
 def test_load_monitor_config_rejects_unknown_report_type(tmp_path):
@@ -50,4 +53,15 @@ def test_load_monitor_config_rejects_unknown_market(tmp_path):
     config_path.write_text("monitor:\n  markets: [mainland, mystery]\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="mystery"):
+        load_monitor_config(config_path)
+
+
+def test_load_monitor_config_rejects_negative_market_cap_threshold(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "monitor:\n  minimum_market_cap_yi: -1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="minimum_market_cap_yi"):
         load_monitor_config(config_path)

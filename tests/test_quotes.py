@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from decimal import Decimal
 import importlib
 
 from cninfo_monitor.models import Report
@@ -89,3 +91,23 @@ def test_quote_failure_keeps_reports_with_unavailable_market_cap():
 
     assert len(enriched) == 1
     assert enriched[0].total_market_cap is None
+
+
+def test_filters_only_known_market_caps_below_the_configured_threshold():
+    quotes = importlib.import_module("cninfo_monitor.quotes")
+    reports = [
+        replace(report("000001"), total_market_cap="99.99亿元"),
+        replace(report("000002"), total_market_cap="100.00亿元"),
+        replace(
+            report("00700", "hong_kong"),
+            total_market_cap="100.01亿港元",
+        ),
+        report("600674"),
+    ]
+
+    filtered = quotes.filter_reports_by_minimum_market_cap(
+        reports,
+        Decimal("100"),
+    )
+
+    assert [item.sec_code for item in filtered] == ["000002", "00700", "600674"]
