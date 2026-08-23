@@ -14,7 +14,9 @@ monitor:
   initial_lookback_hours: 48
   overlap_seconds: 300
   heartbeat_hour: 21
-  minimum_market_cap_yi: 100
+  minimum_market_cap_yi:
+    mainland: 100
+    hong_kong: 500
   bootstrap_silently: true
   notify_when_no_updates: true
 

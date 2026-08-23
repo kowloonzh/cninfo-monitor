@@ -128,7 +128,7 @@ def fetch_reports(
         reports = list(
             filter_reports_by_minimum_market_cap(
                 reports,
-                config.minimum_market_cap_yi,
+                config.minimum_market_cap_yi_by_market,
             )
         )
         reports = list(

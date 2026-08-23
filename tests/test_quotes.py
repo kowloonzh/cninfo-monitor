@@ -93,21 +93,28 @@ def test_quote_failure_keeps_reports_with_unavailable_market_cap():
     assert enriched[0].total_market_cap is None
 
 
-def test_filters_only_known_market_caps_below_the_configured_threshold():
+def test_filters_known_market_caps_using_each_markets_threshold():
     quotes = importlib.import_module("cninfo_monitor.quotes")
     reports = [
         replace(report("000001"), total_market_cap="99.99亿元"),
         replace(report("000002"), total_market_cap="100.00亿元"),
         replace(
             report("00700", "hong_kong"),
-            total_market_cap="100.01亿港元",
+            total_market_cap="499.99亿港元",
+        ),
+        replace(
+            report("00941", "hong_kong"),
+            total_market_cap="500.00亿港元",
         ),
         report("600674"),
     ]
 
     filtered = quotes.filter_reports_by_minimum_market_cap(
         reports,
-        Decimal("100"),
+        {
+            "mainland": Decimal("100"),
+            "hong_kong": Decimal("500"),
+        },
     )
 
-    assert [item.sec_code for item in filtered] == ["000002", "00700", "600674"]
+    assert [item.sec_code for item in filtered] == ["000002", "00941", "600674"]

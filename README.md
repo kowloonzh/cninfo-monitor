@@ -76,7 +76,9 @@ monitor:
     - interim
     - third_quarter
     - quarterly
-  minimum_market_cap_yi: 100
+  minimum_market_cap_yi:
+    mainland: 100
+    hong_kong: 500
   cache_path: "../data/announcements.db"
   initial_lookback_hours: 48
   overlap_seconds: 300
@@ -93,10 +95,10 @@ monitor:
 
 需要同时监控 A 股和港股时保留上述两个配置值；也可以只配置其中一个市场。
 
-`minimum_market_cap_yi` 是推送公司的最低总市值，单位为“亿”：A 股按亿元
-人民币比较，港股和港币计价 B 股按亿港元比较。默认值为 `100`，恰好
-100 亿的公司仍会推送；设置为 `0` 可关闭市值过滤。行情接口没有返回市值时
-不会过滤该公司。
+`minimum_market_cap_yi` 是各市场推送公司的最低总市值，单位为“亿”。默认 A 股
+为 100 亿元、港股为 500 亿港元；恰好达到门槛的公司仍会推送。将对应市场设置为
+`0` 可关闭该市场的市值过滤。港币计价 B 股仍属于 A 股市场，使用 A 股门槛；行情
+接口没有返回市值时不会过滤该公司。
 
 首次运行默认回看最近 48 小时，之后从 SQLite 保存的市场游标继续抓取。
 `overlap_seconds` 默认是 300 秒，用于确定需要重扫的日期，结果通过公告 ID 自动

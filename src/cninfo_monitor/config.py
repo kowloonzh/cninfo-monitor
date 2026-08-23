@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -22,7 +23,7 @@ class MonitorConfig:
     initial_lookback_hours: int
     overlap_seconds: int
     heartbeat_hour: int
-    minimum_market_cap_yi: Decimal
+    minimum_market_cap_yi_by_market: Mapping[str, Decimal]
     bootstrap_silently: bool
     notify_when_no_updates: bool
 
@@ -53,13 +54,31 @@ def load_monitor_config(path: str | Path) -> MonitorConfig:
     if not report_types:
         raise ValueError("monitor.report_types cannot be empty")
 
+    raw_minimum_market_cap = monitor.get(
+        "minimum_market_cap_yi",
+        {"mainland": 100, "hong_kong": 500},
+    )
+    if isinstance(raw_minimum_market_cap, Mapping):
+        unknown_threshold_markets = set(raw_minimum_market_cap) - SUPPORTED_MARKETS
+        if unknown_threshold_markets:
+            raise ValueError(
+                "unsupported minimum_market_cap_yi markets: "
+                + ", ".join(sorted(unknown_threshold_markets))
+            )
+        raw_thresholds = {
+            "mainland": raw_minimum_market_cap.get("mainland", 100),
+            "hong_kong": raw_minimum_market_cap.get("hong_kong", 500),
+        }
+    else:
+        raw_thresholds = dict.fromkeys(SUPPORTED_MARKETS, raw_minimum_market_cap)
     try:
-        minimum_market_cap_yi = Decimal(
-            str(monitor.get("minimum_market_cap_yi", 100))
-        )
+        minimum_market_cap_yi_by_market = {
+            market: Decimal(str(value))
+            for market, value in raw_thresholds.items()
+        }
     except InvalidOperation as exc:
         raise ValueError("monitor.minimum_market_cap_yi must be a number") from exc
-    if minimum_market_cap_yi < 0:
+    if any(value < 0 for value in minimum_market_cap_yi_by_market.values()):
         raise ValueError("monitor.minimum_market_cap_yi cannot be negative")
 
     state_path = Path(str(monitor.get("state_path", "../data/state.json")))
@@ -87,7 +106,7 @@ def load_monitor_config(path: str | Path) -> MonitorConfig:
         initial_lookback_hours=initial_lookback_hours,
         overlap_seconds=overlap_seconds,
         heartbeat_hour=heartbeat_hour,
-        minimum_market_cap_yi=minimum_market_cap_yi,
+        minimum_market_cap_yi_by_market=minimum_market_cap_yi_by_market,
         bootstrap_silently=bool(monitor.get("bootstrap_silently", True)),
         notify_when_no_updates=bool(monitor.get("notify_when_no_updates", True)),
     )

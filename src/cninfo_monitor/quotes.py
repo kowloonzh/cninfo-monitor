@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -54,7 +54,7 @@ def enrich_reports_with_market_caps(
 
 def filter_reports_by_minimum_market_cap(
     reports: Iterable[Report],
-    minimum_market_cap_yi: Decimal,
+    minimum_market_cap_yi_by_market: Mapping[str, Decimal],
 ) -> tuple[Report, ...]:
     kept: list[Report] = []
     for report in reports:
@@ -66,7 +66,7 @@ def filter_reports_by_minimum_market_cap(
         except InvalidOperation:
             kept.append(report)
             continue
-        if value >= minimum_market_cap_yi:
+        if value >= minimum_market_cap_yi_by_market[report.market]:
             kept.append(report)
     return tuple(kept)
 

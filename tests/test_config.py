@@ -32,7 +32,10 @@ monitor:
     assert config.cache_path == (tmp_path / "data/announcements.db").resolve()
     assert config.request_timeout == 20.0
     assert config.notify_when_no_updates is True
-    assert config.minimum_market_cap_yi == Decimal("100")
+    assert config.minimum_market_cap_yi_by_market == {
+        "mainland": Decimal("100"),
+        "hong_kong": Decimal("500"),
+    }
     assert config.initial_lookback_hours == 48
     assert config.overlap_seconds == 300
     assert config.heartbeat_hour == 21
@@ -80,9 +83,49 @@ def test_load_monitor_config_rejects_unknown_market(tmp_path):
 def test_load_monitor_config_rejects_negative_market_cap_threshold(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
-        "monitor:\n  minimum_market_cap_yi: -1\n",
+        """
+monitor:
+  minimum_market_cap_yi:
+    mainland: 100
+    hong_kong: -1
+""",
         encoding="utf-8",
     )
 
     with pytest.raises(ValueError, match="minimum_market_cap_yi"):
         load_monitor_config(config_path)
+
+
+def test_load_monitor_config_accepts_market_specific_cap_thresholds(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+monitor:
+  minimum_market_cap_yi:
+    mainland: 100
+    hong_kong: 500
+""",
+        encoding="utf-8",
+    )
+
+    config = load_monitor_config(config_path)
+
+    assert config.minimum_market_cap_yi_by_market == {
+        "mainland": Decimal("100"),
+        "hong_kong": Decimal("500"),
+    }
+
+
+def test_load_monitor_config_keeps_scalar_cap_threshold_compatible(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "monitor:\n  minimum_market_cap_yi: 250\n",
+        encoding="utf-8",
+    )
+
+    config = load_monitor_config(config_path)
+
+    assert config.minimum_market_cap_yi_by_market == {
+        "mainland": Decimal("250"),
+        "hong_kong": Decimal("250"),
+    }
