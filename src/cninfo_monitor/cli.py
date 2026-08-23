@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import argparse
-import calendar
 import datetime as dt
 import sys
 from pathlib import Path
 
 import httpx
 
+from cninfo_monitor.cache import AnnouncementCache
 from cninfo_monitor.cninfo import (
     CNINFO_TIMEZONE,
-    query_all_announcements,
-    query_hong_kong_announcements,
+    query_announcements_by_time,
     select_formal_reports,
 )
 from cninfo_monitor.config import MonitorConfig, load_monitor_config
@@ -45,35 +44,84 @@ CNINFO_HEADERS = {
 }
 
 
-def fetch_reports(config: MonitorConfig, end_date: str) -> list[Report]:
-    end = dt.date.fromisoformat(end_date)
-    start_date = rolling_month_start(end_date)
+def fetch_reports(
+    config: MonitorConfig,
+    end_time: dt.datetime,
+    cache: AnnouncementCache,
+) -> list[Report]:
+    if end_time.tzinfo is None:
+        raise ValueError("end_time must be timezone-aware")
+    end_time = end_time.astimezone(CNINFO_TIMEZONE).replace(microsecond=0)
     with httpx.Client(
         headers=CNINFO_HEADERS,
         timeout=config.request_timeout,
         follow_redirects=True,
     ) as client:
+        scan_failures: list[str] = []
+        for market in sorted(config.markets):
+            fetched_through = cache.fetched_through(market)
+            if fetched_through is None:
+                start_time = end_time - dt.timedelta(
+                    hours=config.initial_lookback_hours
+                )
+            else:
+                start_time = fetched_through - dt.timedelta(
+                    seconds=config.overlap_seconds
+                )
+            try:
+                snapshot_date = start_time.date()
+                while snapshot_date <= end_time.date():
+                    day_start = dt.datetime.combine(
+                        snapshot_date,
+                        dt.time(),
+                        tzinfo=CNINFO_TIMEZONE,
+                    )
+                    day_end = min(
+                        day_start + dt.timedelta(days=1, seconds=-1),
+                        end_time,
+                    )
+                    known_ids = (
+                        cache.announcement_ids_for_date(market, snapshot_date)
+                        if cache.has_date_snapshot(market, snapshot_date)
+                        else set()
+                    )
+                    rows = []
+                    plates = ("sz", "sh", "bj") if market == "mainland" else ("",)
+                    for plate in plates:
+                        rows.extend(
+                            query_announcements_by_time(
+                                client,
+                                market=market,
+                                plate=plate,
+                                start_time=day_start,
+                                end_time=day_end,
+                                known_announcement_ids=known_ids,
+                            )
+                        )
+                    cache.store_scans(
+                        {market: rows},
+                        scan_starts={market: start_time},
+                        scanned_through=day_end,
+                        snapshot_dates={market: [snapshot_date]},
+                    )
+                    snapshot_date += dt.timedelta(days=1)
+            except Exception as exc:
+                scan_failures.append(f"{market}: {exc}")
+
+        if scan_failures:
+            raise RuntimeError("; ".join(scan_failures))
+
         reports: list[Report] = []
-        if "mainland" in config.markets:
-            announcements = query_all_announcements(
-                client,
-                start_date=start_date,
-                end_date=end.isoformat(),
-                report_types=config.report_types,
-            )
-            reports.extend(select_formal_reports(announcements, config.report_types))
-        if "hong_kong" in config.markets:
-            announcements = query_hong_kong_announcements(
-                client,
-                start_date=start_date,
-                end_date=end.isoformat(),
-                report_types=config.report_types,
+        for market in sorted(config.markets):
+            announcements = cache.load_unprocessed(
+                market,
+                overlap_seconds=config.overlap_seconds,
             )
             reports.extend(
                 select_formal_reports(
                     announcements,
                     config.report_types,
-                    market="hong_kong",
+                    market=market,
                 )
             )
         reports = list(enrich_reports_with_market_caps(client, reports))
@@ -93,16 +141,6 @@ def fetch_reports(config: MonitorConfig, end_date: str) -> list[Report]:
         reports,
         key=lambda report: (report.disclosure_date, report.market, report.sec_code),
     )
-
-
-def rolling_month_start(end_date: str) -> str:
-    end = dt.date.fromisoformat(end_date)
-    if end.month == 1:
-        year, month = end.year - 1, 12
-    else:
-        year, month = end.year, end.month - 1
-    day = min(end.day, calendar.monthrange(year, month)[1])
-    return dt.date(year, month, day).isoformat()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -131,10 +169,11 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         config = load_monitor_config(args.config)
-        end_date = args.end_date or dt.datetime.now(
-            CNINFO_TIMEZONE
-        ).date().isoformat()
-        reports = fetch_reports(config, end_date)
+        end_time = _resolve_end_time(args)
+        cache = AnnouncementCache(
+            ":memory:" if args.dry_run else config.cache_path
+        )
+        reports = fetch_reports(config, end_time, cache)
         if args.dry_run:
             print(format_digest(reports))
             return 0
@@ -150,12 +189,19 @@ def main(argv: list[str] | None = None) -> int:
             markets=config.markets,
         )
         if result.baselined and not result.new_reports:
+            cache.mark_processed(config.markets, end_time)
             print(f"已建立新市场基线：{result.baselined} 家，本次不推送")
             return 0
         if not result.new_reports:
-            if config.notify_when_no_updates:
+            cache.mark_processed(config.markets, end_time)
+            if (
+                config.notify_when_no_updates
+                and end_time.hour >= config.heartbeat_hour
+                and not cache.has_daily_activity(end_time.date())
+            ):
                 heartbeat = format_heartbeat()
                 if send_workwechat_text(heartbeat, workwechat):
+                    cache.record_daily_activity(end_time.date(), end_time)
                     print("查询完成：今日无新增财报，心跳消息已发送")
                     return 0
                 print(
@@ -166,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"查询完成：当前 {len(reports)} 家，无新增财报")
             return 0
         if result.notification_sent:
+            cache.mark_processed(config.markets, end_time)
+            cache.record_daily_activity(end_time.date(), end_time)
             print(f"查询完成：已推送 {len(result.new_reports)} 家新财报")
             return 0
         print(
@@ -175,12 +223,36 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     except (OSError, RuntimeError, ValueError, httpx.HTTPError) as exc:
+        if args.command == "run" and not args.dry_run:
+            try:
+                workwechat = load_workwechat_config(args.config)
+                send_workwechat_text(
+                    "巨潮财报监控执行失败："
+                    f"{exc}\n下一小时自动重试，扫描游标未推进。",
+                    workwechat,
+                )
+            except (OSError, RuntimeError, ValueError):
+                pass
         print(f"cninfo-monitor 执行失败：{exc}", file=sys.stderr)
         return 1
 
 
 def format_heartbeat() -> str:
     return "今日无新增财报"
+
+
+def _resolve_end_time(args: argparse.Namespace) -> dt.datetime:
+    if args.end_time:
+        parsed = dt.datetime.strptime(args.end_time, "%Y-%m-%d %H:%M:%S")
+        return parsed.replace(tzinfo=CNINFO_TIMEZONE)
+    if args.end_date:
+        parsed_date = dt.date.fromisoformat(args.end_date)
+        return dt.datetime.combine(
+            parsed_date,
+            dt.time(23, 59, 59),
+            tzinfo=CNINFO_TIMEZONE,
+        )
+    return dt.datetime.now(CNINFO_TIMEZONE).replace(microsecond=0)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -192,7 +264,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="查询并推送新增财报")
     run_parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
-    run_parser.add_argument("--end-date", help="查询截止日期（YYYY-MM-DD）")
+    end_group = run_parser.add_mutually_exclusive_group()
+    end_group.add_argument("--end-date", help="查询截止日期（YYYY-MM-DD）")
+    end_group.add_argument(
+        "--end-time",
+        help="查询截止时间（YYYY-MM-DD HH:MM:SS，北京时间）",
+    )
     run_parser.add_argument(
         "--notify-existing",
         action="store_true",

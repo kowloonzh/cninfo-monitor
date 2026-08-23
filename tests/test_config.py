@@ -29,9 +29,30 @@ monitor:
     assert config.report_types == frozenset({"interim", "annual"})
     assert config.markets == frozenset({"mainland", "hong_kong"})
     assert config.state_path == (tmp_path / "data/state.json").resolve()
+    assert config.cache_path == (tmp_path / "data/announcements.db").resolve()
     assert config.request_timeout == 20.0
     assert config.notify_when_no_updates is True
     assert config.minimum_market_cap_yi == Decimal("100")
+    assert config.initial_lookback_hours == 48
+    assert config.overlap_seconds == 300
+    assert config.heartbeat_hour == 21
+
+
+def test_load_monitor_config_accepts_all_financial_report_types(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+monitor:
+  report_types: [annual, first_quarter, interim, third_quarter, quarterly]
+""",
+        encoding="utf-8",
+    )
+
+    config = load_monitor_config(config_path)
+
+    assert config.report_types == frozenset(
+        {"annual", "first_quarter", "interim", "third_quarter", "quarterly"}
+    )
 
 
 def test_load_monitor_config_rejects_unknown_report_type(tmp_path):

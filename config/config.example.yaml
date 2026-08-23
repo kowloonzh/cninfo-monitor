@@ -3,9 +3,17 @@ monitor:
     - mainland
     - hong_kong
   report_types:
+    - annual
+    - first_quarter
     - interim
+    - third_quarter
+    - quarterly
   state_path: "../data/state.json"
+  cache_path: "../data/announcements.db"
   request_timeout: 60
+  initial_lookback_hours: 48
+  overlap_seconds: 300
+  heartbeat_hour: 21
   minimum_market_cap_yi: 100
   bootstrap_silently: true
   notify_when_no_updates: true

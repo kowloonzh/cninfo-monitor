@@ -6,7 +6,7 @@ DAILY_SCRIPT="$PROJECT_DIR/scripts/run_daily.sh"
 if [[ -n "${CNINFO_CRON_SCHEDULE:-}" ]]; then
   SCHEDULES=("$CNINFO_CRON_SCHEDULE")
 else
-  SCHEDULES=("0 18 * * *" "30 21 * * *")
+  SCHEDULES=("0 * * * *")
 fi
 BEGIN_MARKER="# BEGIN cninfo-monitor"
 END_MARKER="# END cninfo-monitor"

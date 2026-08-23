@@ -8,7 +8,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
-def test_installs_evening_monitor_runs_and_preserves_other_jobs(tmp_path):
+def test_installs_hourly_monitor_run_and_preserves_other_jobs(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     state_path = tmp_path / "crontab"
@@ -42,5 +42,11 @@ def test_installs_evening_monitor_runs_and_preserves_other_jobs(tmp_path):
     installed_lines = installed.splitlines()
     daily_script = PROJECT_DIR / "scripts/run_daily.sh"
     assert "15 7 * * * /other/job" in installed
-    assert f"0 18 * * * TZ=Asia/Shanghai {daily_script}" in installed_lines
-    assert f"30 21 * * * TZ=Asia/Shanghai {daily_script}" in installed_lines
+    assert f"0 * * * * TZ=Asia/Shanghai {daily_script}" in installed_lines
+
+
+def test_daily_script_does_not_replace_current_time_with_end_of_day():
+    script = (PROJECT_DIR / "scripts/run_daily.sh").read_text(encoding="utf-8")
+
+    assert '--end-date "$RUN_DATE"' not in script
+    assert 'COMMAND+=(--end-time "$RUN_END_TIME")' in script

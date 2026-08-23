@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import html
 import re
+import time
 from collections.abc import Iterable
 from typing import Any
 
@@ -18,12 +19,7 @@ REPORT_TYPE_DEFINITIONS = {
     "interim": ("category_bndbg_szsh", "半年度报告"),
     "third_quarter": ("category_sjdbg_szsh", "第三季度报告"),
 }
-HONG_KONG_REPORT_KEYWORDS = {
-    "annual": ("年度报告", "年报", "全年业绩", "年度业绩", "十二个月", "12个月"),
-    "first_quarter": ("第一季度", "首季度", "三个月", "3个月"),
-    "interim": ("中期", "六个月", "6个月", "半年度"),
-    "third_quarter": ("第三季度", "九个月", "9个月"),
-}
+SUPPORTED_REPORT_TYPES = frozenset({*REPORT_TYPE_DEFINITIONS, "quarterly"})
 EXCLUDED_TITLE_PARTS = ("摘要", "英文", "更正", "修订", "更新", "取消")
 HONG_KONG_EXCLUDED_TITLE_PARTS = (
     "通知",
@@ -51,6 +47,18 @@ HONG_KONG_EXCLUDED_TITLE_PARTS = (
     "推介",
     "电话会议",
     "電話會議",
+    "业绩发布会",
+    "業績發布會",
+    "摘要",
+    "评估报告",
+    "評估報告",
+    "风险持续评估",
+    "風險持續評估",
+    "附属公司",
+    "附屬公司",
+    "控股股东",
+    "控股股東",
+    "控股子公司",
     "更正",
     "修订",
     "修訂",
@@ -63,99 +71,87 @@ _YEAR_TOKEN = r"(?:20\d{2}|[二〇零○Ｏ一二三四五六七八九]{4})"
 _CHINESE_DIGITS = str.maketrans("二〇零○Ｏ一二三四五六七八九", "20000123456789")
 
 
-def query_all_announcements(
+def query_announcements_by_time(
     client: Any,
     *,
-    start_date: str,
-    end_date: str,
-    report_types: Iterable[str],
+    market: str,
+    plate: str = "",
+    start_time: dt.datetime,
+    end_time: dt.datetime,
+    known_announcement_ids: set[str] | frozenset[str] = frozenset(),
+    retry_delays: tuple[float, ...] = (1.0, 3.0),
 ) -> list[dict[str, Any]]:
-    requested_types = set(report_types)
-    _validate_report_types(requested_types)
-    announcements: list[dict[str, Any]] = []
-
-    for report_type, (category, _) in REPORT_TYPE_DEFINITIONS.items():
-        if report_type not in requested_types:
-            continue
-        page = 1
-        while True:
-            response = client.post(
-                QUERY_URL,
-                data={
-                    "pageNum": page,
-                    "pageSize": 30,
-                    "column": "szse",
-                    "tabName": "fulltext",
-                    "plate": "",
-                    "stock": "",
-                    "searchkey": "",
-                    "secid": "",
-                    "category": category,
-                    "trade": "",
-                    "seDate": f"{start_date}~{end_date}",
-                    "sortName": "",
-                    "sortType": "",
-                    "isHLtitle": "false",
-                },
-            )
-            response.raise_for_status()
-            result = response.json()
-            announcements.extend(result.get("announcements") or [])
-            if not result.get("hasMore"):
-                break
-            page += 1
-
-    return announcements
-
-
-def query_hong_kong_announcements(
-    client: Any,
-    *,
-    start_date: str,
-    end_date: str,
-    report_types: Iterable[str],
-) -> list[dict[str, Any]]:
-    requested_types = set(report_types)
-    _validate_report_types(requested_types)
-    keywords = {
-        keyword
-        for report_type in requested_types
-        for keyword in HONG_KONG_REPORT_KEYWORDS[report_type]
-    }
+    columns = {"mainland": "szse", "hong_kong": "hke"}
+    try:
+        column = columns[market]
+    except KeyError as exc:
+        raise ValueError(f"unsupported market: {market}") from exc
+    date_range = (
+        f"{start_time.astimezone(CNINFO_TIMEZONE):%Y-%m-%d %H:%M:%S}~"
+        f"{end_time.astimezone(CNINFO_TIMEZONE):%Y-%m-%d %H:%M:%S}"
+    )
     announcements: dict[str, dict[str, Any]] = {}
-
-    for keyword in sorted(keywords):
-        page = 1
+    seen_page_signatures: set[tuple[str, ...]] = set()
+    page = 1
+    while True:
+        data = {
+            "pageNum": page,
+            "pageSize": 30,
+            "column": column,
+            "tabName": "fulltext",
+            "plate": plate,
+            "stock": "",
+            "searchkey": "",
+            "secid": "",
+            "category": "",
+            "trade": "",
+            "seDate": date_range,
+            "sortName": "",
+            "sortType": "",
+            "isHLtitle": "false",
+        }
+        delays = iter((*retry_delays, None))
         while True:
-            response = client.post(
-                QUERY_URL,
-                data={
-                    "pageNum": page,
-                    "pageSize": 30,
-                    "column": "hke",
-                    "tabName": "fulltext",
-                    "plate": "",
-                    "stock": "",
-                    "searchkey": keyword,
-                    "secid": "",
-                    "category": "",
-                    "trade": "",
-                    "seDate": f"{start_date}~{end_date}",
-                    "sortName": "",
-                    "sortType": "",
-                    "isHLtitle": "false",
-                },
-            )
-            response.raise_for_status()
-            result = response.json()
-            for announcement in result.get("announcements") or []:
-                announcement_id = announcement.get("announcementId")
-                if announcement_id is not None:
-                    announcements[str(announcement_id)] = announcement
-            if not result.get("hasMore"):
+            try:
+                response = client.post(QUERY_URL, data=data)
+                response.raise_for_status()
+                result = response.json()
                 break
-            page += 1
-
+            except Exception:
+                delay = next(delays)
+                if delay is None:
+                    raise
+                time.sleep(delay)
+        page_announcements = result.get("announcements") or []
+        page_ids: set[str] = set()
+        for announcement in page_announcements:
+            announcement_id = announcement.get("announcementId")
+            if announcement_id is not None:
+                normalized_id = str(announcement_id)
+                page_ids.add(normalized_id)
+                announcements[normalized_id] = announcement
+        page_signature = tuple(
+            str(item.get("announcementId")) for item in page_announcements
+        )
+        if page_signature and page_signature in seen_page_signatures:
+            raise RuntimeError(
+                f"巨潮分页出现重复页：market={market}, plate={plate or '-'}, page={page}"
+            )
+        if page_signature:
+            seen_page_signatures.add(page_signature)
+        if (
+            known_announcement_ids
+            and page_ids
+            and page_ids <= known_announcement_ids
+        ):
+            break
+        if not result.get("hasMore"):
+            break
+        if page >= 100:
+            raise RuntimeError(
+                f"巨潮分页超过 100 页：market={market}, plate={plate or '-'}"
+            )
+        page += 1
     return list(announcements.values())
 
 
@@ -243,17 +239,76 @@ def _match_hong_kong_report_type(
     year = int(year_match.group().translate(_CHINESE_DIGITS))
 
     result_words = r"(?:报告|報告|业绩|業績|年报|年報)"
-    six_months = r"(?:(?:六|6)个?月|(?:六|6)個月)"
+    performance_words = r"(?:业绩|業績)"
+    six_months = r"(?:六|6)(?:个|個)月"
     patterns = {
-        "interim": rf"(?:中期.*{result_words}|{six_months}.*{result_words})",
-        "annual": rf"(?:(?:年度|全年|十二个月|十二個月|12个?月).*(?:{result_words})|年报|年報)",
-        "third_quarter": rf"(?:第三季度|九个月|九個月|9个?月).*(?:{result_words})",
-        "first_quarter": rf"(?:第一季度|首季度|三个月|三個月|3个?月).*(?:{result_words})",
+        "interim": rf"(?:(?:中期|半年度).*{result_words}|{six_months}.*{performance_words})",
+        "annual": (
+            rf"(?:(?<!半)年度(?:报告|報告)|年报|年報|全年.*(?:业绩|業績)|"
+            r"(?:年度|十二个月|十二個月|12(?:个|個)月)"
+            r"(?:全年)?(?:的|之)?(?:未经审核|未經審核|未经审计|未經審計)?"
+            r"(?:综合|綜合|财务|財務)?(?:业绩|業績))"
+        ),
+        "third_quarter": (
+            rf"(?:(?:第三季度|第三季).*(?:{result_words})|"
+            rf"(?:九个月|九個月|9(?:个|個)月).*{performance_words})"
+        ),
+        "first_quarter": (
+            rf"(?:(?:第一季度|第一季|首季度|首季).*(?:{result_words})|"
+            rf"(?:三个月|三個月|3(?:个|個)月).*{performance_words})"
+        ),
+        "quarterly": r"(?:季度(?:财务|財務)?(?:报告|報告|业绩|業績)|季报|季報)",
     }
-    for report_type in ("interim", "annual", "third_quarter", "first_quarter"):
+    for report_type in (
+        "interim",
+        "third_quarter",
+        "first_quarter",
+        "quarterly",
+        "annual",
+    ):
         if report_type in requested_types and re.search(patterns[report_type], title):
+            if report_type == "quarterly":
+                return _quarterly_period_type(title), year
             return report_type, year
     return None
+
+
+def _quarterly_period_type(title: str) -> str:
+    quarter_match = re.search(r"第(?P<quarter>[一二三四1234])季度", title)
+    if quarter_match is not None:
+        raw_quarter = quarter_match.group("quarter")
+        chinese_quarters = {"一": 1, "二": 2, "三": 3, "四": 4}
+        quarter = chinese_quarters.get(
+            raw_quarter,
+            int(raw_quarter) if raw_quarter.isdigit() else 0,
+        )
+        if quarter:
+            return f"quarterly_q{quarter}"
+
+    match = re.search(
+        rf"{_YEAR_TOKEN}年(?P<month>1[0-2]|0?[1-9]|十[一二]?|[一二三四五六七八九])"
+        r"月份?.*?季度",
+        title,
+    )
+    if match is None:
+        return "quarterly"
+    raw_month = match.group("month")
+    chinese_months = {
+        "一": 1,
+        "二": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+        "十": 10,
+        "十一": 11,
+        "十二": 12,
+    }
+    month = chinese_months.get(raw_month, int(raw_month) if raw_month.isdigit() else 0)
+    return f"quarterly_{month:02d}" if month else "quarterly"
 
 
 def _normalize_title(title: str) -> str:
@@ -261,6 +316,6 @@ def _normalize_title(title: str) -> str:
 
 
 def _validate_report_types(report_types: set[str]) -> None:
-    unknown = report_types - REPORT_TYPE_DEFINITIONS.keys()
+    unknown = report_types - SUPPORTED_REPORT_TYPES
     if unknown:
         raise ValueError(f"unsupported report types: {', '.join(sorted(unknown))}")

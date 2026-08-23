@@ -2,17 +2,18 @@
 set -uo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
+PYTHON_BIN="${CNINFO_PYTHON_BIN:-$PROJECT_DIR/.venv/bin/python}"
 CONFIG_PATH="${CNINFO_CONFIG_PATH:-$PROJECT_DIR/config/config.yaml}"
 LOCK_PATH="${CNINFO_LOCK_PATH:-/tmp/cninfo-monitor.lock}"
-RUN_DATE="${1:-$(TZ=Asia/Shanghai date +%F)}"
+RUN_END_TIME="${1:-}"
+RUN_DATE="$(TZ=Asia/Shanghai date +%F)"
 LOG_DIR="$PROJECT_DIR/logs"
 LOG_PATH="$LOG_DIR/monitor-$RUN_DATE.log"
 
 mkdir -p "$LOG_DIR"
 exec >>"$LOG_PATH" 2>&1
 
-echo "[$(TZ=Asia/Shanghai date '+%F %T %Z')] cninfo-monitor start end_date=$RUN_DATE"
+echo "[$(TZ=Asia/Shanghai date '+%F %T %Z')] cninfo-monitor start end_time=${RUN_END_TIME:-now}"
 
 cd "$PROJECT_DIR" || exit 1
 exec 9>"$LOCK_PATH"
@@ -26,9 +27,11 @@ if [ ! -x "$PYTHON_BIN" ]; then
   exit 1
 fi
 
-"$PYTHON_BIN" -m cninfo_monitor.cli run \
-  --config "$CONFIG_PATH" \
-  --end-date "$RUN_DATE"
+COMMAND=("$PYTHON_BIN" -m cninfo_monitor.cli run --config "$CONFIG_PATH")
+if [ -n "$RUN_END_TIME" ]; then
+  COMMAND+=(--end-time "$RUN_END_TIME")
+fi
+"${COMMAND[@]}"
 status=$?
 
 echo "[$(TZ=Asia/Shanghai date '+%F %T %Z')] cninfo-monitor exit=$status"
