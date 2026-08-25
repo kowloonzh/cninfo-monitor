@@ -10,6 +10,7 @@ import httpx
 from cninfo_monitor.cache import AnnouncementCache
 from cninfo_monitor.cninfo import (
     CNINFO_TIMEZONE,
+    REPORT_TYPE_DEFINITIONS,
     query_announcements_by_time,
     select_formal_reports,
 )
@@ -32,6 +33,7 @@ from cninfo_monitor.quotes import (
 
 
 DEFAULT_CONFIG_PATH = Path("config/config.yaml")
+MARKET_CAP_RECHECK_DAYS = 7
 CNINFO_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) "
@@ -86,13 +88,28 @@ def fetch_reports(
                         else set()
                     )
                     rows = []
-                    plates = ("sz", "sh", "bj") if market == "mainland" else ("",)
-                    for plate in plates:
+                    if market == "mainland":
+                        categories = tuple(
+                            category
+                            for report_type, (category, _) in (
+                                REPORT_TYPE_DEFINITIONS.items()
+                            )
+                            if report_type in config.report_types
+                        )
+                        query_partitions = (
+                            (plate, category)
+                            for plate in ("sz", "sh", "bj")
+                            for category in categories
+                        )
+                    else:
+                        query_partitions = (("", ""),)
+                    for plate, category in query_partitions:
                         rows.extend(
                             query_announcements_by_time(
                                 client,
                                 market=market,
                                 plate=plate,
+                                category=category,
                                 start_time=day_start,
                                 end_time=day_end,
                                 known_announcement_ids=known_ids,
@@ -111,12 +128,16 @@ def fetch_reports(
         if scan_failures:
             raise RuntimeError("; ".join(scan_failures))
 
+        cache.expire_market_cap_pending(
+            before=end_time - dt.timedelta(days=MARKET_CAP_RECHECK_DAYS)
+        )
         reports: list[Report] = []
         for market in sorted(config.markets):
             announcements = cache.load_unprocessed(
                 market,
                 overlap_seconds=config.overlap_seconds,
             )
+            announcements.extend(cache.load_market_cap_pending(market))
             reports.extend(
                 select_formal_reports(
                     announcements,
@@ -124,12 +145,24 @@ def fetch_reports(
                     market=market,
                 )
             )
-        reports = list(enrich_reports_with_market_caps(client, reports))
+        enriched_reports = list(enrich_reports_with_market_caps(client, reports))
         reports = list(
             filter_reports_by_minimum_market_cap(
-                reports,
+                enriched_reports,
                 config.minimum_market_cap_yi_by_market,
             )
+        )
+        eligible_references = {
+            (report.market, report.announcement_id) for report in reports
+        }
+        cache.defer_market_cap_reports(
+            (
+                (report.market, report.announcement_id)
+                for report in enriched_reports
+                if (report.market, report.announcement_id)
+                not in eligible_references
+            ),
+            deferred_at=end_time,
         )
         reports = list(
             enrich_reports_with_index_memberships(
@@ -189,10 +222,12 @@ def main(argv: list[str] | None = None) -> int:
             markets=config.markets,
         )
         if result.baselined and not result.new_reports:
+            cache.clear_market_cap_pending(_report_references(reports))
             cache.mark_processed(config.markets, end_time)
             print(f"已建立新市场基线：{result.baselined} 家，本次不推送")
             return 0
         if not result.new_reports:
+            cache.clear_market_cap_pending(_report_references(reports))
             cache.mark_processed(config.markets, end_time)
             if (
                 config.notify_when_no_updates
@@ -212,6 +247,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"查询完成：当前 {len(reports)} 家，无新增财报")
             return 0
         if result.notification_sent:
+            cache.clear_market_cap_pending(_report_references(reports))
             cache.mark_processed(config.markets, end_time)
             cache.record_daily_activity(end_time.date(), end_time)
             print(f"查询完成：已推送 {len(result.new_reports)} 家新财报")
@@ -239,6 +275,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def format_heartbeat() -> str:
     return "今日无新增财报"
+
+
+def _report_references(reports: list[Report]) -> list[tuple[str, str]]:
+    return [(report.market, report.announcement_id) for report in reports]
 
 
 def _resolve_end_time(args: argparse.Namespace) -> dt.datetime:

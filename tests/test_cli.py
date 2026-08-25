@@ -215,8 +215,56 @@ def test_fetch_reports_combines_cached_mainland_and_hong_kong(tmp_path, monkeypa
         assert {call["plate"] for call in market_calls} == (
             {"sz", "sh", "bj"} if market == "mainland" else {""}
         )
+        assert {call["category"] for call in market_calls} == (
+            {"category_bndbg_szsh"} if market == "mainland" else {""}
+        )
     assert cache.fetched_through("mainland") == end_time
     assert cache.processed_through("mainland") == end_time - dt.timedelta(hours=48)
+
+
+def test_fetch_reports_queries_each_requested_mainland_report_category(
+    tmp_path, monkeypatch
+):
+    config_path = write_config(tmp_path)
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        .replace("report_types: [interim]", "report_types: [annual, interim]")
+        .replace("  state_path:", "  initial_lookback_hours: 1\n  state_path:"),
+        encoding="utf-8",
+    )
+    calls = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(cli.httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        cli,
+        "query_announcements_by_time",
+        lambda *args, **kwargs: calls.append(kwargs.copy()) or [],
+    )
+    config = cli.load_monitor_config(config_path)
+    end_time = dt.datetime(2026, 8, 25, 9, 0, tzinfo=CNINFO_TIMEZONE)
+
+    assert cli.fetch_reports(
+        config,
+        end_time,
+        AnnouncementCache(config.cache_path),
+    ) == []
+
+    assert len(calls) == 6
+    assert {call["plate"] for call in calls} == {"sz", "sh", "bj"}
+    assert {call["category"] for call in calls} == {
+        "category_ndbg_szsh",
+        "category_bndbg_szsh",
+    }
 
 
 def test_fetch_reports_uses_saved_cursor_with_overlap(tmp_path, monkeypatch):
@@ -254,6 +302,74 @@ def test_fetch_reports_uses_saved_cursor_with_overlap(tmp_path, monkeypatch):
         2026, 8, 23, 0, 0, tzinfo=CNINFO_TIMEZONE
     )
     assert calls[-1]["end_time"] == first_end + dt.timedelta(hours=1)
+
+
+def test_fetch_reports_rechecks_a_report_deferred_by_market_cap(
+    tmp_path, monkeypatch
+):
+    config_path = write_config(tmp_path)
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "  state_path:",
+            "  initial_lookback_hours: 1\n  state_path:",
+        ),
+        encoding="utf-8",
+    )
+    config = cli.load_monitor_config(config_path)
+    cache = AnnouncementCache(config.cache_path)
+    row = {
+        "secCode": "000001",
+        "secName": "测试公司",
+        "announcementTitle": "2026年半年度报告",
+        "announcementId": "pending",
+        "announcementTime": 1787587200000,
+        "adjunctUrl": "pending.PDF",
+    }
+    quote_caps = iter(("99.00", "101.00"))
+    query_rows = iter(([row], [], [], [], [], []))
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            fields = [""] * 46
+            fields[45] = next(quote_caps)
+            body = f'v_sz000001="{"~".join(fields)}";\n'.encode("gbk")
+
+            class FakeResponse:
+                content = body
+
+                def raise_for_status(self):
+                    return None
+
+            return FakeResponse()
+
+    monkeypatch.setattr(cli.httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        cli,
+        "query_announcements_by_time",
+        lambda *args, **kwargs: next(query_rows),
+    )
+    monkeypatch.setattr(cli, "load_index_memberships", lambda: {})
+    first_end = dt.datetime(2026, 8, 25, 9, 0, tzinfo=CNINFO_TIMEZONE)
+
+    assert cli.fetch_reports(config, first_end, cache) == []
+    cache.mark_processed(config.markets, first_end)
+    second = cli.fetch_reports(
+        config,
+        first_end + dt.timedelta(hours=1),
+        cache,
+    )
+
+    assert [report.sec_code for report in second] == ["000001"]
+    assert len(cache.load_market_cap_pending("mainland")) == 1
 
 
 def test_failed_market_scan_preserves_its_cursor_after_other_market_succeeds(
@@ -449,3 +565,49 @@ def test_failed_report_notification_does_not_advance_processing_cursor(
     assert exit_code == 1
     assert cache.fetched_through("mainland") == end
     assert cache.processed_through("mainland") == start
+
+
+def test_successful_report_notification_clears_market_cap_pending(
+    tmp_path, monkeypatch
+):
+    config_path = write_config(tmp_path)
+    start = dt.datetime(2026, 8, 25, 8, 0, tzinfo=CNINFO_TIMEZONE)
+    end = dt.datetime(2026, 8, 25, 9, 0, tzinfo=CNINFO_TIMEZONE)
+    row = {
+        "secCode": "000001",
+        "secName": "平安银行",
+        "announcementTitle": "2026年半年度报告",
+        "announcementId": "1",
+        "announcementTime": int(start.timestamp() * 1000),
+        "adjunctUrl": "1.PDF",
+    }
+
+    def fetch_pending(config, end_time, cache):
+        cache.store_scans(
+            {"mainland": [row]},
+            scan_starts={"mainland": start},
+            scanned_through=end_time,
+        )
+        cache.defer_market_cap_reports(
+            [("mainland", "1")],
+            deferred_at=end_time,
+        )
+        return [sample_report()]
+
+    monkeypatch.setattr(cli, "fetch_reports", fetch_pending)
+    monkeypatch.setattr(cli, "send_workwechat_text", lambda message, config: True)
+
+    exit_code = cli.main(
+        [
+            "run",
+            "--config",
+            str(config_path),
+            "--end-time",
+            "2026-08-25 09:00:00",
+            "--notify-existing",
+        ]
+    )
+
+    cache = AnnouncementCache(tmp_path / "announcements.db")
+    assert exit_code == 0
+    assert cache.load_market_cap_pending("mainland") == []

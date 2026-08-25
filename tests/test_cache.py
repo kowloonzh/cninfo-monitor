@@ -95,3 +95,42 @@ def test_daily_activity_is_recorded_once(tmp_path):
     cache.record_daily_activity(day, moment(21))
 
     assert cache.has_daily_activity(day) is True
+
+
+def test_market_cap_pending_survives_processing_and_can_be_cleared(tmp_path):
+    cache = AnnouncementCache(tmp_path / "announcements.db")
+    row = announcement("pending", "2026年半年度报告", int(moment(8).timestamp() * 1000))
+    cache.store_scans(
+        {"mainland": [row]},
+        scan_starts={"mainland": moment(7)},
+        scanned_through=moment(9),
+    )
+    cache.defer_market_cap_reports(
+        [("mainland", "pending")],
+        deferred_at=moment(9),
+    )
+    cache.mark_processed({"mainland"}, moment(9))
+
+    assert cache.load_market_cap_pending("mainland") == [row]
+
+    cache.clear_market_cap_pending([("mainland", "pending")])
+
+    assert cache.load_market_cap_pending("mainland") == []
+
+
+def test_market_cap_pending_can_be_expired(tmp_path):
+    cache = AnnouncementCache(tmp_path / "announcements.db")
+    row = announcement("pending", "2026年半年度报告", int(moment(8).timestamp() * 1000))
+    cache.store_scans(
+        {"mainland": [row]},
+        scan_starts={"mainland": moment(7)},
+        scanned_through=moment(9),
+    )
+    cache.defer_market_cap_reports(
+        [("mainland", "pending")],
+        deferred_at=moment(9),
+    )
+
+    cache.expire_market_cap_pending(before=moment(10))
+
+    assert cache.load_market_cap_pending("mainland") == []

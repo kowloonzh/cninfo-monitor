@@ -42,6 +42,12 @@ class AnnouncementCache:
                 completed_at TEXT NOT NULL,
                 PRIMARY KEY (market, snapshot_date)
             );
+            CREATE TABLE IF NOT EXISTS market_cap_pending (
+                market TEXT NOT NULL,
+                announcement_id TEXT NOT NULL,
+                first_deferred_at TEXT NOT NULL,
+                PRIMARY KEY (market, announcement_id)
+            );
             """
         )
         self._migrate_first_seen_at()
@@ -172,6 +178,65 @@ class AnnouncementCache:
             (market, snapshot_date.isoformat()),
         ).fetchone()
         return row is not None
+
+    def defer_market_cap_reports(
+        self,
+        references: Iterable[tuple[str, str]],
+        *,
+        deferred_at: dt.datetime,
+    ) -> None:
+        rows = [
+            (market, announcement_id, _format_datetime(deferred_at))
+            for market, announcement_id in references
+        ]
+        if not rows:
+            return
+        with self._connection:
+            self._connection.executemany(
+                """
+                INSERT INTO market_cap_pending (
+                    market, announcement_id, first_deferred_at
+                ) VALUES (?, ?, ?)
+                ON CONFLICT(market, announcement_id) DO NOTHING
+                """,
+                rows,
+            )
+
+    def load_market_cap_pending(self, market: str) -> list[dict[str, Any]]:
+        rows = self._connection.execute(
+            """
+            SELECT announcements.payload_json
+            FROM market_cap_pending
+            JOIN announcements USING (market, announcement_id)
+            WHERE market_cap_pending.market = ?
+            ORDER BY market_cap_pending.first_deferred_at, announcement_id
+            """,
+            (market,),
+        ).fetchall()
+        return [json.loads(str(row[0])) for row in rows]
+
+    def clear_market_cap_pending(
+        self,
+        references: Iterable[tuple[str, str]],
+    ) -> None:
+        rows = list(references)
+        if not rows:
+            return
+        with self._connection:
+            self._connection.executemany(
+                """
+                DELETE FROM market_cap_pending
+                WHERE market = ? AND announcement_id = ?
+                """,
+                rows,
+            )
+
+    def expire_market_cap_pending(self, *, before: dt.datetime) -> None:
+        with self._connection:
+            self._connection.execute(
+                "DELETE FROM market_cap_pending WHERE first_deferred_at < ?",
+                (_format_datetime(before),),
+            )
 
     def mark_processed(
         self,

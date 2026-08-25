@@ -160,6 +160,38 @@ def test_time_query_retries_a_failed_page():
     assert client.calls == 2
 
 
+def test_time_query_passes_a_mainland_report_category():
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"announcements": [], "hasMore": False}
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, data):
+            self.calls.append(data.copy())
+            return FakeResponse()
+
+    client = FakeClient()
+    now = dt.datetime(2026, 8, 25, 9, 0, 0, tzinfo=CNINFO_TIMEZONE)
+
+    query_announcements_by_time(
+        client,
+        market="mainland",
+        plate="sz",
+        category="category_bndbg_szsh",
+        start_time=now.replace(hour=0),
+        end_time=now,
+        retry_delays=(),
+    )
+
+    assert client.calls[0]["category"] == "category_bndbg_szsh"
+
+
 def test_time_query_stops_after_a_page_is_already_cached():
     class FakeResponse:
         def __init__(self, page):

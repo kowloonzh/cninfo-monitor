@@ -76,6 +76,7 @@ def query_announcements_by_time(
     *,
     market: str,
     plate: str = "",
+    category: str = "",
     start_time: dt.datetime,
     end_time: dt.datetime,
     known_announcement_ids: set[str] | frozenset[str] = frozenset(),
@@ -103,7 +104,7 @@ def query_announcements_by_time(
             "stock": "",
             "searchkey": "",
             "secid": "",
-            "category": "",
+            "category": category,
             "trade": "",
             "seDate": date_range,
             "sortName": "",
@@ -135,7 +136,9 @@ def query_announcements_by_time(
         )
         if page_signature and page_signature in seen_page_signatures:
             raise RuntimeError(
-                f"巨潮分页出现重复页：market={market}, plate={plate or '-'}, page={page}"
+                "巨潮分页出现重复页："
+                f"market={market}, plate={plate or '-'}, "
+                f"category={category or '-'}, page={page}"
             )
         if page_signature:
             seen_page_signatures.add(page_signature)
@@ -149,7 +152,9 @@ def query_announcements_by_time(
             break
         if page >= 100:
             raise RuntimeError(
-                f"巨潮分页超过 100 页：market={market}, plate={plate or '-'}"
+                "巨潮分页超过 100 页："
+                f"market={market}, plate={plate or '-'}, "
+                f"category={category or '-'}"
             )
         page += 1
     return list(announcements.values())
