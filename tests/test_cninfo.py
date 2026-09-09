@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+import httpx
 import pytest
 
 from cninfo_monitor.cninfo import (
@@ -158,6 +159,65 @@ def test_time_query_retries_a_failed_page():
     )
 
     assert client.calls == 2
+
+
+@pytest.mark.parametrize("status", [502, 503, 504])
+def test_gateway_failure_retries_same_page_with_long_backoff(status, monkeypatch, caplog):
+    sleeps = []
+    monkeypatch.setattr("cninfo_monitor.cninfo.time.sleep", sleeps.append)
+    requests = []
+
+    def respond(request):
+        requests.append(request.content)
+        if len(requests) <= 3:
+            return httpx.Response(status, headers={"Server": "gateway", "Via": "edge"})
+        return httpx.Response(200, json={"announcements": [{"announcementId": "recovered"}], "hasMore": False})
+
+    now = dt.datetime(2026, 9, 9, 9, tzinfo=CNINFO_TIMEZONE)
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        rows = query_announcements_by_time(
+            client, market="mainland", plate="sz", category="category_ndbg_szsh",
+            start_time=now.replace(hour=0), end_time=now,
+        )
+
+    assert rows == [{"announcementId": "recovered"}]
+    assert len(requests) == 4 and len(set(requests)) == 1
+    assert len(sleeps) == 3
+    assert all(base < delay <= base * 1.2 for base, delay in zip((15, 45, 120), sleeps))
+    for field in ("market=mainland", "plate=sz", "category=category_ndbg_szsh", "page=1", f"status={status}", "elapsed=", "attempt=3/4", "retry_in=", "gateway", "edge"):
+        assert field in caplog.text
+
+
+def test_gateway_exhaustion_logs_final_failure_without_sensitive_headers(monkeypatch, caplog):
+    sleeps = []
+    monkeypatch.setattr("cninfo_monitor.cninfo.time.sleep", sleeps.append)
+    attempts = []
+
+    def respond(request):
+        attempts.append(request)
+        return httpx.Response(502, headers={"Server": "gateway", "Set-Cookie": "secret-cookie"}, text="private response body")
+
+    now = dt.datetime(2026, 9, 9, 9, tzinfo=CNINFO_TIMEZONE)
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            query_announcements_by_time(client, market="hong_kong", start_time=now, end_time=now)
+
+    assert len(attempts) == 4
+    assert len(sleeps) == 3
+    assert "attempt=4/4" in caplog.text
+    assert "retry_in=none" in caplog.text
+    assert "secret-cookie" not in caplog.text
+    assert "private response body" not in caplog.text
+
+
+def test_other_errors_keep_short_retries(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("cninfo_monitor.cninfo.time.sleep", sleeps.append)
+    now = dt.datetime(2026, 9, 9, 9, tzinfo=CNINFO_TIMEZONE)
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(500))) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            query_announcements_by_time(client, market="hong_kong", start_time=now, end_time=now)
+    assert sleeps == [1, 3]
 
 
 def test_time_query_passes_a_mainland_report_category():

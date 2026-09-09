@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import logging
+import random
 import re
 import time
 from collections.abc import Iterable
@@ -13,6 +15,10 @@ from cninfo_monitor.models import Report
 QUERY_URL = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
 PDF_BASE_URL = "https://static.cninfo.com.cn/"
 CNINFO_TIMEZONE = dt.timezone(dt.timedelta(hours=8), "Asia/Shanghai")
+LOGGER = logging.getLogger(__name__)
+GATEWAY_RETRY_DELAYS = (15.0, 45.0, 120.0)
+SHORT_RETRY_DELAYS = (1.0, 3.0)
+DIAGNOSTIC_HEADERS = ("server", "via", "date", "content-type", "retry-after", "x-request-id")
 REPORT_TYPE_DEFINITIONS = {
     "annual": ("category_ndbg_szsh", "年度报告"),
     "first_quarter": ("category_yjdbg_szsh", "第一季度报告"),
@@ -80,7 +86,7 @@ def query_announcements_by_time(
     start_time: dt.datetime,
     end_time: dt.datetime,
     known_announcement_ids: set[str] | frozenset[str] = frozenset(),
-    retry_delays: tuple[float, ...] = (1.0, 3.0),
+    retry_delays: tuple[float, ...] | None = None,
 ) -> list[dict[str, Any]]:
     columns = {"mainland": "szse", "hong_kong": "hke"}
     try:
@@ -111,15 +117,37 @@ def query_announcements_by_time(
             "sortType": "",
             "isHLtitle": "false",
         }
-        delays = iter((*retry_delays, None))
+        attempt = 0
         while True:
+            attempt += 1
+            response = None
+            started = time.monotonic()
             try:
                 response = client.post(QUERY_URL, data=data)
                 response.raise_for_status()
                 result = response.json()
                 break
-            except Exception:
-                delay = next(delays)
+            except Exception as exc:
+                status = getattr(response, "status_code", None)
+                gateway_error = status in (502, 503, 504)
+                delays = retry_delays
+                if delays is None:
+                    delays = GATEWAY_RETRY_DELAYS if gateway_error else SHORT_RETRY_DELAYS
+                delay = delays[attempt - 1] if attempt <= len(delays) else None
+                if delay is not None and gateway_error and retry_delays is None:
+                    delay *= random.uniform(1.0, 1.2)
+                headers = getattr(response, "headers", {})
+                LOGGER.warning(
+                    "CNINFO query failed time=%s market=%s plate=%s category=%s "
+                    "page=%d range=%s attempt=%d/%d status=%s error=%s "
+                    "elapsed=%.3fs retry_in=%s headers=%r",
+                    dt.datetime.now(CNINFO_TIMEZONE).isoformat(timespec="seconds"),
+                    market, plate or "-", category or "-", page, date_range,
+                    attempt, max(attempt, len(delays) + 1), status or "-",
+                    type(exc).__name__, time.monotonic() - started,
+                    "none" if delay is None else f"{delay:.3f}s",
+                    {key: headers[key] for key in DIAGNOSTIC_HEADERS if key in headers},
+                )
                 if delay is None:
                     raise
                 time.sleep(delay)
