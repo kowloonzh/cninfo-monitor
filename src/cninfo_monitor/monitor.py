@@ -99,7 +99,11 @@ class RunResult:
 
 def format_digest(reports: Iterable[Report]) -> str:
     rows = list(reports)
-    lines = [f"巨潮财报监控：新发布 {len(rows)} 家"]
+    lines = [
+        f"巨潮财报监控：新披露 {len(rows)} 份"
+        if any(row.market == "us" for row in rows)
+        else f"巨潮财报监控：新发布 {len(rows)} 家"
+    ]
     for report in rows:
         lines.extend(["", _format_report(report)])
     return "\n".join(lines)
@@ -115,7 +119,8 @@ def format_digest_pages(
         return (format_digest(rows),)
 
     total = len(rows)
-    longest_header = _format_digest_page_header(total, total, total, total)
+    disclosures = any(row.market == "us" for row in rows)
+    longest_header = _format_digest_page_header(total, total, total, total, disclosures)
     body_limit = max_bytes - len(f"{longest_header}\n\n".encode("utf-8"))
     if body_limit <= 0:
         raise ValueError("digest page byte limit is too small for its header")
@@ -145,6 +150,7 @@ def format_digest_pages(
                     page_number,
                     page_count,
                     len(blocks),
+                    disclosures,
                 ),
                 *blocks,
             ]
@@ -158,7 +164,13 @@ def _format_digest_page_header(
     page_number: int,
     page_count: int,
     page_size: int,
+    disclosures: bool = False,
 ) -> str:
+    if disclosures:
+        return (
+            f"巨潮财报监控：新披露 {total} 份"
+            f"（第 {page_number}/{page_count} 条，本条 {page_size} 份）"
+        )
     return (
         f"巨潮财报监控：新发布 {total} 家"
         f"（第 {page_number}/{page_count} 条，本条 {page_size} 家）"
@@ -166,12 +178,13 @@ def _format_digest_page_header(
 
 
 def _format_report(report: Report) -> str:
-    market_name = "港股" if report.market == "hong_kong" else "沪深京"
+    market_name = {"hong_kong": "港股", "us": "美股"}.get(report.market, "沪深京")
     lines = [
         f"{report.sec_name}（{report.sec_code}）",
         f"市场：{market_name}",
-        f"总市值：{report.total_market_cap or '暂无数据'}",
     ]
+    if report.market != "us":
+        lines.append(f"总市值：{report.total_market_cap or '暂无数据'}")
     if report.index_names:
         lines.append(f"指数：{'、'.join(report.index_names)}")
     lines.extend(

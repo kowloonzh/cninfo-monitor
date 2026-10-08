@@ -19,6 +19,8 @@ class Report:
 
     @property
     def company_report_key(self) -> str:
+        if self.market == "us":
+            return f"us:{self.announcement_id}"
         if self.market != "mainland":
             return f"{self.market}:{self.report_year}:{self.report_type}:{self.sec_code}"
         return f"{self.report_year}:{self.report_type}:{self.sec_code}"

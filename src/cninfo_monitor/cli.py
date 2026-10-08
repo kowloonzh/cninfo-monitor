@@ -21,6 +21,7 @@ from cninfo_monitor.indexes import (
     refresh_official_index_cache,
 )
 from cninfo_monitor.models import Report
+from cninfo_monitor.sec import fetch_us_announcements
 from cninfo_monitor.monitor import JsonStateStore, format_digest, run_monitor
 from cninfo_monitor.notifications import (
     load_workwechat_config,
@@ -71,6 +72,13 @@ def fetch_reports(
                     seconds=config.overlap_seconds
                 )
             try:
+                if market == "us":
+                    rows = fetch_us_announcements(config, start_time, end_time)
+                    cache.store_scans(
+                        {market: rows}, scan_starts={market: start_time},
+                        scanned_through=end_time,
+                    )
+                    continue
                 snapshot_date = start_time.date()
                 while snapshot_date <= end_time.date():
                     day_start = dt.datetime.combine(
@@ -132,12 +140,19 @@ def fetch_reports(
             before=end_time - dt.timedelta(days=MARKET_CAP_RECHECK_DAYS)
         )
         reports: list[Report] = []
+        us_reports: list[Report] = []
         for market in sorted(config.markets):
             announcements = cache.load_unprocessed(
                 market,
                 overlap_seconds=config.overlap_seconds,
             )
             announcements.extend(cache.load_market_cap_pending(market))
+            if market == "us":
+                for row in announcements:
+                    payload = dict(row["report"])
+                    payload["index_names"] = tuple(payload.get("index_names", ()))
+                    us_reports.append(Report(**payload))
+                continue
             reports.extend(
                 select_formal_reports(
                     announcements,
@@ -145,6 +160,18 @@ def fetch_reports(
                     market=market,
                 )
             )
+        memberships = load_index_memberships()
+        hstech_codes = {
+            key.split(":", 1)[1]
+            for key, names in memberships.items()
+            if key.startswith("hong_kong:") and "恒生科技" in names
+        }
+        if "hong_kong" in config.markets and not hstech_codes:
+            raise RuntimeError("恒生科技成份股缓存为空；请先运行 refresh-indexes 刷新指数缓存")
+        reports = [
+            report for report in reports
+            if report.market != "hong_kong" or report.sec_code.zfill(5) in hstech_codes
+        ]
         enriched_reports = list(enrich_reports_with_market_caps(client, reports))
         reports = list(
             filter_reports_by_minimum_market_cap(
@@ -167,9 +194,10 @@ def fetch_reports(
         reports = list(
             enrich_reports_with_index_memberships(
                 reports,
-                load_index_memberships(),
+                memberships,
             )
         )
+        reports.extend(us_reports)
     return sorted(
         reports,
         key=lambda report: (report.disclosure_date, report.market, report.sec_code),

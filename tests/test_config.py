@@ -129,3 +129,14 @@ def test_load_monitor_config_keeps_scalar_cap_threshold_compatible(tmp_path):
         "mainland": Decimal("250"),
         "hong_kong": Decimal("250"),
     }
+
+
+def test_us_config_requires_sec_identity_and_resolves_membership_cache(tmp_path):
+    path = tmp_path / 'config.yaml'
+    path.write_text('monitor:\n  markets: [us]\n')
+    with pytest.raises(ValueError, match='sec_user_agent'):
+        load_monitor_config(path)
+    path.write_text('monitor:\n  markets: [us]\n  sec_user_agent: monitor test@example.com\n')
+    config = load_monitor_config(path)
+    assert config.sec_user_agent == 'monitor test@example.com'
+    assert config.us_membership_path == tmp_path.parent / 'data/nasdaq100.json'

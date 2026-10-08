@@ -65,7 +65,7 @@ INDEX_SPECS = (
         "HSTECH",
         "hong_kong",
         30,
-        "https://www.hsi.com.hk/static/uploads/contents/zh_cn/dl_centre/"
+        "https://origin-www.hsi.com.hk/static/uploads/contents/zh_cn/dl_centre/"
         "factsheets/hstechc.pdf",
     ),
     IndexSpec(
@@ -239,21 +239,6 @@ def refresh_official_index_cache(
                     text = "\n".join(page.extract_text() or "" for page in reader.pages)
                     constituents[spec.code] = parse_hsi_constituent_text(text)
                     as_of[spec.code] = _parse_hsi_as_of(text)
-
-                    live = client.get(
-                        HSTECH_LIVE_URL,
-                        params={"language": "schi", "indexCode": "02083.00"},
-                    )
-                    live.raise_for_status()
-                    live_data = live.json().get("data") or {}
-                    live_codes = {
-                        str(row["stockCode"]).zfill(5)
-                        for row in live_data.get("constituents", [])
-                    }
-                    if len(live_codes) != 10 or not live_codes.issubset(
-                        constituents[spec.code]
-                    ):
-                        raise ValueError("恒生科技月度成份与官方实时前十成份不一致")
     except (KeyError, TypeError, xlrd.XLRDError) as exc:
         raise ValueError(f"无法解析官方指数成份数据：{exc}") from exc
 

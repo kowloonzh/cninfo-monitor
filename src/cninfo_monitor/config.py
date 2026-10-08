@@ -4,13 +4,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+import re
 
 import yaml
 
 from cninfo_monitor.cninfo import SUPPORTED_REPORT_TYPES
 
 
-SUPPORTED_MARKETS = frozenset({"mainland", "hong_kong"})
+SUPPORTED_MARKETS = frozenset({"mainland", "hong_kong", "us"})
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class MonitorConfig:
     minimum_market_cap_yi_by_market: Mapping[str, Decimal]
     bootstrap_silently: bool
     notify_when_no_updates: bool
+    sec_user_agent: str = ""
+    us_membership_path: Path = Path("data/nasdaq100.json")
 
 
 def load_monitor_config(path: str | Path) -> MonitorConfig:
@@ -43,6 +46,12 @@ def load_monitor_config(path: str | Path) -> MonitorConfig:
         raise ValueError(f"unsupported markets: {', '.join(sorted(unknown_markets))}")
     if not markets:
         raise ValueError("monitor.markets cannot be empty")
+    sec_user_agent = str(monitor.get("sec_user_agent", "")).strip()
+    if "us" in markets and not re.search(r"[^\s@]+@[^\s@]+\.[^\s@]+", sec_user_agent):
+        raise ValueError("monitor.sec_user_agent must identify the SEC client with a contact email")
+    us_membership_path = Path(str(monitor.get("us_membership_path", "../data/nasdaq100.json")))
+    if not us_membership_path.is_absolute():
+        us_membership_path = config_path.parent / us_membership_path
     report_types = frozenset(
         str(value).strip()
         for value in monitor.get("report_types", ["interim"])
@@ -70,7 +79,7 @@ def load_monitor_config(path: str | Path) -> MonitorConfig:
             "hong_kong": raw_minimum_market_cap.get("hong_kong", 500),
         }
     else:
-        raw_thresholds = dict.fromkeys(SUPPORTED_MARKETS, raw_minimum_market_cap)
+        raw_thresholds = dict.fromkeys(("mainland", "hong_kong"), raw_minimum_market_cap)
     try:
         minimum_market_cap_yi_by_market = {
             market: Decimal(str(value))
@@ -109,4 +118,6 @@ def load_monitor_config(path: str | Path) -> MonitorConfig:
         minimum_market_cap_yi_by_market=minimum_market_cap_yi_by_market,
         bootstrap_silently=bool(monitor.get("bootstrap_silently", True)),
         notify_when_no_updates=bool(monitor.get("notify_when_no_updates", True)),
+        sec_user_agent=sec_user_agent,
+        us_membership_path=us_membership_path.resolve(),
     )

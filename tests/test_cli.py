@@ -611,3 +611,31 @@ def test_successful_report_notification_clears_market_cap_pending(
     cache = AnnouncementCache(tmp_path / "announcements.db")
     assert exit_code == 0
     assert cache.load_market_cap_pending("mainland") == []
+
+
+def test_us_scan_bypasses_cninfo_and_quotes_and_preserves_cursor_on_failure(tmp_path, monkeypatch):
+    from dataclasses import replace
+    path = write_config(tmp_path)
+    config = replace(cli.load_monitor_config(path), markets=frozenset({'us'}), sec_user_agent='monitor test@example.com')
+    cache = AnnouncementCache(config.cache_path)
+    end = dt.datetime(2026, 10, 8, 9, tzinfo=CNINFO_TIMEZONE)
+    from cninfo_monitor.sec import filing_report
+    from dataclasses import asdict
+    report = filing_report({'form': '10-Q', 'accessionNumber': 'a1', 'filingDate': '2026-10-07',
+        'reportDate': '2026-09-30', 'primaryDocument': 'report.htm'},
+        {'cik': 1, 'symbols': ['TEST'], 'name': 'Test'}, '')
+    def unexpected(*args, **kwargs):
+        pytest.fail('US reports must not use CNINFO or Chinese quotes')
+    monkeypatch.setattr(cli, 'query_announcements_by_time', unexpected)
+    monkeypatch.setattr(cli, 'enrich_reports_with_market_caps', lambda c, r: () if not r else unexpected())
+    monkeypatch.setattr(cli, 'fetch_us_announcements', lambda *args: [
+        {'announcementId': 'a1', 'announcementTime': int(end.timestamp()*1000), 'report': asdict(report)}])
+    reports = cli.fetch_reports(config, end, cache)
+    assert reports[0].index_names == ('纳斯达克100',)
+    assert cache.fetched_through('us') == end
+    def fail(*args):
+        raise RuntimeError('SEC unavailable')
+    monkeypatch.setattr(cli, 'fetch_us_announcements', fail)
+    with pytest.raises(RuntimeError, match='SEC unavailable'):
+        cli.fetch_reports(config, end + dt.timedelta(hours=1), cache)
+    assert cache.fetched_through('us') == end

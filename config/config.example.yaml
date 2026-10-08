@@ -2,6 +2,9 @@ monitor:
   markets:
     - mainland
     - hong_kong
+    # - us  # 纳斯达克100；启用前填写下方 SEC 联系信息
+  sec_user_agent: ""  # 例如 cninfo-monitor your-contact@example.com
+  us_membership_path: "../data/nasdaq100.json"
   report_types:
     - annual
     - first_quarter
