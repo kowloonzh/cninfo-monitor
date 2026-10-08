@@ -166,11 +166,26 @@ def fetch_reports(
             for key, names in memberships.items()
             if key.startswith("hong_kong:") and "恒生科技" in names
         }
+        csi_300_500_codes = {
+            key.split(":", 1)[1]
+            for key, names in memberships.items()
+            if key.startswith("mainland:")
+            and {"沪深300", "中证500"}.intersection(names)
+        }
         if "hong_kong" in config.markets and not hstech_codes:
             raise RuntimeError("恒生科技成份股缓存为空；请先运行 refresh-indexes 刷新指数缓存")
+        if "mainland" in config.markets and not csi_300_500_codes:
+            raise RuntimeError("沪深300/中证500成份股缓存为空；请先运行 refresh-indexes 刷新指数缓存")
         reports = [
             report for report in reports
-            if report.market != "hong_kong" or report.sec_code.zfill(5) in hstech_codes
+            if (
+                report.market != "hong_kong"
+                or report.sec_code.zfill(5) in hstech_codes
+            )
+            and (
+                report.market != "mainland"
+                or report.sec_code.zfill(6) in csi_300_500_codes
+            )
         ]
         enriched_reports = list(enrich_reports_with_market_caps(client, reports))
         reports = list(
