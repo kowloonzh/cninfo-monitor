@@ -83,6 +83,21 @@ def test_infers_report_year_from_each_formal_report_title():
     ]
 
 
+def test_selects_abbreviated_third_quarter_report_title():
+    rows = [
+        announcement("300750", "宁德时代", "2026年三季度报告", "catl"),
+        announcement("300751", "公司二", "2026年第三季度报告", "full"),
+        announcement("300752", "公司三", "2026年三季度报告摘要", "summary"),
+    ]
+
+    reports = select_formal_reports(rows, {"third_quarter"})
+
+    assert [(report.sec_code, report.report_year, report.report_type) for report in reports] == [
+        ("300750", 2026, "third_quarter"),
+        ("300751", 2026, "third_quarter"),
+    ]
+
+
 def test_queries_all_announcements_by_exact_time_and_follows_pagination():
     class FakeResponse:
         def __init__(self, page):

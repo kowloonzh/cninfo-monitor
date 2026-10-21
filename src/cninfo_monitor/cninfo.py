@@ -254,7 +254,12 @@ def _match_report_type(
     for report_type, (_, title_suffix) in REPORT_TYPE_DEFINITIONS.items():
         if report_type not in requested_types:
             continue
-        match = re.search(rf"(?P<year>\d{{4}})年{re.escape(title_suffix)}", title)
+        suffix_pattern = (
+            r"(?:第)?三季度报告"
+            if report_type == "third_quarter"
+            else re.escape(title_suffix)
+        )
+        match = re.search(rf"(?P<year>\d{{4}})年{suffix_pattern}", title)
         if match:
             return report_type, int(match.group("year"))
     return None
