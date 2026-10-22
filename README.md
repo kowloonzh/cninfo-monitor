@@ -68,10 +68,11 @@ monitor:
   us_membership_path: "../data/nasdaq100.json"
 ```
 
-- 每日首次运行从[纳斯达克官网接口](https://api.nasdaq.com/api/quote/list-type/nasdaq100)
-  刷新名单，再用 SEC 股票代码表映射 CIK；同一公司的多个股份类别合并查询。
-  名单缓存记录来源日期，结果不完整、超过 7 天未更新或有代码无法映射时明确报错，
-  不会静默缩小监控范围。
+- 纳斯达克100名单按季度调整周期刷新：每年3、6、9、12月例行生效周之后，首次运行从
+  [纳斯达克官网接口](https://api.nasdaq.com/api/quote/list-type/nasdaq100)刷新名单，再用 SEC
+  股票代码表映射 CIK；同一公司的多个股份类别合并查询。其余运行使用本地名单缓存。
+  名单缓存记录来源日期，刷新时来源数据超过 7 天、结果不完整或有代码无法映射时明确报错，
+  不会静默缩小监控范围。季度规则之外的快速纳入或临时成分调整会在下一次例行刷新时同步。
 - 通过 [SEC submissions API](https://www.sec.gov/search-filings/edgar-application-programming-interfaces)
   监控 `10-Q` 季报、`10-K` / `20-F` / `40-F` 年报；`8-K` 仅选 Item 2.02，
   `6-K` 检查包含附件的申报全文，识别已发布业绩及财务数字。排除修订表格和普通公告。

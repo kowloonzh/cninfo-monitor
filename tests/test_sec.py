@@ -108,7 +108,7 @@ def test_query_reads_historical_files_and_filters_time(monkeypatch):
     assert len(paths) == 2
 
 
-def test_membership_refresh_is_daily_and_incomplete_refresh_preserves_cache(tmp_path, monkeypatch):
+def test_membership_refreshes_after_quarterly_check_and_preserves_cache_on_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(sec.time, 'sleep', lambda _: None)
     members = [{'symbol': f'S{i}'} for i in range(100)]
     tickers = {str(i): {'ticker': f'S{i}', 'cik_str': i+1, 'title': f'Company {i}'} for i in range(100)}
@@ -125,9 +125,11 @@ def test_membership_refresh_is_daily_and_incomplete_refresh_preserves_cache(tmp_
         assert len(sec.load_companies(reader, path, NOW)) == 100
         assert len(calls) == 2
         original = path.read_bytes()
+        assert len(sec.load_companies(reader, path, NOW + dt.timedelta(days=1))) == 100
+        assert len(calls) == 2
         members.pop()
         with pytest.raises(ValueError, match='Incomplete'):
-            sec.load_companies(reader, path, NOW+dt.timedelta(days=1))
+            sec.load_companies(reader, path, dt.datetime(2026, 12, 26, tzinfo=dt.timezone.utc))
         assert path.read_bytes() == original
 
 

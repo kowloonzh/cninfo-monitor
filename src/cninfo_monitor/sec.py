@@ -26,6 +26,23 @@ LOGGER = logging.getLogger(__name__)
 ET = ZoneInfo('America/New_York')
 
 
+def _nasdaq_reconstitution_check_date(year: int, month: int) -> dt.date:
+    """Use the Friday after the regular effective week as a safe refresh date."""
+    first_weekday = dt.date(year, month, 1).weekday()
+    first_friday = 1 + (4 - first_weekday) % 7
+    third_friday = dt.date(year, month, first_friday + 14)
+    return third_friday + dt.timedelta(days=7)
+
+
+def _latest_nasdaq_reconstitution_check_date(today: dt.date) -> dt.date:
+    candidates = (
+        _nasdaq_reconstitution_check_date(year, month)
+        for year in (today.year - 1, today.year)
+        for month in (3, 6, 9, 12)
+    )
+    return max(date for date in candidates if date <= today)
+
+
 class SecReader:
     def __init__(self, client: httpx.Client, user_agent: str):
         self.client = client
@@ -67,7 +84,8 @@ def map_companies(members: list[dict], tickers: dict) -> list[dict]:
 def load_companies(reader: SecReader, path: Path, now: dt.datetime) -> list[dict]:
     if path.exists():
         snapshot = json.loads(path.read_text(encoding='utf-8'))
-        if snapshot['refreshed_on'] == now.date().isoformat():
+        check_date = _latest_nasdaq_reconstitution_check_date(now.date())
+        if snapshot.get('refreshed_on', '') >= check_date.isoformat():
             return snapshot['companies']
     response = reader.client.get(NASDAQ_URL, headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'})
     response.raise_for_status()
@@ -75,7 +93,14 @@ def load_companies(reader: SecReader, path: Path, now: dt.datetime) -> list[dict
     members = data['data']['rows']
     if len(members) < 95 or len(members) > 110 or int(data['totalrecords']) != len(members):
         raise ValueError('Incomplete Nasdaq-100 constituent response')
-    source_date = dt.datetime.strptime(data['date'], '%b %d, %Y').date()
+    date_match = re.fullmatch(
+        r'([A-Za-z]{3} \d{1,2}, \d{4})(?: \d{1,2}:\d{2} [AP]M)?',
+        data['date'].strip(),
+        re.IGNORECASE,
+    )
+    if not date_match:
+        raise ValueError(f"Unrecognized Nasdaq constituent date: {data['date']}")
+    source_date = dt.datetime.strptime(date_match.group(1), '%b %d, %Y').date()
     if not 0 <= (now.date() - source_date).days <= 7:
         raise ValueError('Nasdaq-100 constituent source is stale')
     companies = map_companies(members, reader.get(TICKERS_URL).json())

@@ -357,7 +357,9 @@ def test_fetch_reports_rechecks_a_report_deferred_by_market_cap(
         "query_announcements_by_time",
         lambda *args, **kwargs: next(query_rows),
     )
-    monkeypatch.setattr(cli, "load_index_memberships", lambda: {})
+    monkeypatch.setattr(
+        cli, "load_index_memberships", lambda: {"mainland:000001": ("沪深300",)}
+    )
     first_end = dt.datetime(2026, 8, 25, 9, 0, tzinfo=CNINFO_TIMEZONE)
 
     assert cli.fetch_reports(config, first_end, cache) == []
